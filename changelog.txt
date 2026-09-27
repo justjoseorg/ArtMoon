@@ -19,6 +19,14 @@ New:
   crossfading as the selection moves. The master list and detail panel sit
   translucent over it so the art glows through.
 
+Fixed:
+
+• Streaming: the shared clipboard works end to end. The client and the host were
+  labelling each clipboard payload differently, so every transfer was thrown away
+  the moment it arrived — and silently, because a rejected payload was never
+  reported to anyone. Both sides now use the same label, in both directions.
+
+
 --------------------------------------
 Version 1.3.0 (21/09/2026)
 --------------------------------------

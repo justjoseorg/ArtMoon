@@ -18,7 +18,12 @@ namespace ClipboardCrypto
 
 std::string aad(bool clientToHost, const std::string& uniqueId)
 {
-    return std::string("StreamLight-Clipboard/1 ") + (clientToHost ? "C2H " : "H2C ") + uniqueId;
+    // ⚠️ This string is a protocol constant: the host seals every clipboard payload with the
+    // same bytes (ArtLight Control's ClipboardShare.Aad). Change it on one side only and every
+    // payload fails to authenticate — silently, because a failed tag is not a user-facing error.
+    // The port from StreamTweak left "StreamLight-Clipboard/1" here while the host was already
+    // writing "ArtMoon-Clipboard/1", which is what broke the clipboard end to end.
+    return std::string("ArtMoon-Clipboard/1 ") + (clientToHost ? "C2H " : "H2C ") + uniqueId;
 }
 
 bool unwrapKey(const std::string& privateKeyPem,

@@ -37,6 +37,7 @@ namespace ClipboardCrypto
               const std::string& aad,
               std::string& utf8TextOut, bool& sensitiveOut);
 
-    /** "StreamLight-Clipboard/1 C2H <uniqueId>" — the same string StreamTweak builds. */
+    /** "ArtMoon-Clipboard/1 C2H <uniqueId>" — the same string ArtLight Control's host builds.
+     *  Both sides must agree byte for byte; a mismatch fails every payload silently. */
     std::string aad(bool clientToHost, const std::string& uniqueId);
 }
