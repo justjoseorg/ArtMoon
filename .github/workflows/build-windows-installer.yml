@@ -5,6 +5,11 @@ permissions:
 
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      release_tag:
+        required: false
+        type: string
   push:
     branches: [main]
     paths:
@@ -57,9 +62,32 @@ jobs:
           if (-not $setupExe) { throw "installer was not produced in build/installer" }
           Write-Host "ArtMoon installer ready: $($setupExe.FullName)"
 
+      - name: Verify the installer carries its version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The updater only offers an update when an asset matches
+          # ^ArtMoon_(\d+(\.\d+){1,3})_Installer\.exe$ AND the version in the
+          # name equals the release tag (app/backend/appupdate.cpp). Anything
+          # else is invisible to every Windows user, with no error to go on, so
+          # catch it at build time rather than at release time.
+          $exe = Get-ChildItem "build/installer/*.exe" | Select-Object -First 1
+          if ($exe.Name -notmatch '^ArtMoon_\d+(\.\d+){1,3}_Installer\.exe$') {
+            throw "Installer is '$($exe.Name)'; the updater requires ArtMoon_<version>_Installer.exe"
+          }
+          Write-Host "Installer name is good: $($exe.Name)"
+          $tag = "${{ inputs.release_tag }}"
+          if ($tag) {
+            $want = "ArtMoon_$($tag.TrimStart('v'))_Installer.exe"
+            if ($exe.Name -ne $want) {
+              throw "Installer is '$($exe.Name)' but tag $tag needs '$want' - does ArtMoon.iss AppVersion still need bumping?"
+            }
+            Write-Host "Name matches the tag: $want"
+          }
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ArtMoon-installer
+          name: ArtMoon-installer${{ inputs.release_tag && format('-{0}', inputs.release_tag) || '' }}
           path: build/installer/*.exe
           if-no-files-found: error
