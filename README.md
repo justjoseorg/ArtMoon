@@ -58,7 +58,7 @@ ArtMoon works with any Moonlight-compatible host, but **it works best with ArtLi
 - The classic presets stay in the list, merged with your display's real rates, sorted
 
 <div align="center">
-  <img width="960" alt="ArtMoon settings — native refresh-rate detection" src="docs/screenshots/settings-video.png" />
+  <img width="960" alt="ArtMoon settings — Video open, tabs across the top, frame rate picked from the displays in use" src="docs/screenshots/settings-video.png" />
 </div>
 
 **🕹️ Gamepad-first, keyboard-equal**
