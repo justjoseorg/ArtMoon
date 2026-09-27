@@ -1537,7 +1537,7 @@ void FFmpegVideoDecoder::stringifyVideoStats(VIDEO_STATS& stats, char* output, i
         ret = snprintf(&output[offset], length - offset,
                        "%sGPU: %s%% | Enc: %s%% | Temp: %sC | VRAM: %s\n"
                        "CPU: %s%% | Net TX: %s Mbps\n",
-                       anyClientItem ? "--- Host Metrics (StreamTweak) ---\n" : "",
+                       anyClientItem ? "--- Host Metrics (ArtLight) ---\n" : "",
                        gpuStr, encStr, tempStr, vramStr, cpuStr, netStr);
 
         if (ret > 0 && ret < length - offset)
