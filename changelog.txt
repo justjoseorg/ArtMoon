@@ -5,143 +5,123 @@ ArtMoon - ChangeLog - Developed by onaiaku & Rias
 https://github.com/onaiaku/ArtMoon
 
 --------------------------------------
-Version 1.4.0 (27/09/2026)
+**Version 1.4.0 (27/09/2026)**
 --------------------------------------
 
-The 25 September library merge, plus everything fixed since: the host page
-splits into Games, Apps and All, both machines get their own power row, and
-the shared clipboard works. Lines are the desktop app unless they say
-Android.
+The 25 September library merge, plus everything shipped since. A line is the
+desktop app unless it says Android.
 
-New:
+**New — 30**
 
-  Library
-    • The host page splits into Games, Apps and All. All opens first, so
-      desktop, Big Picture and the host's own apps are one list rather than
-      a tab change away.
-    • Move an entry between Games and Apps with the right stick click (M on
-      the keyboard). The choice is kept per host.
-    • Pinned games: Start on the pad or P pins the selected game, which
-      then sits under Last played in alphabetical order.
-    • Resume from Home: a host that is streaming shows the game in progress,
-      with Resume in place of Play again.
-    • The host page reopens on the tab you last chose, per host. A Remote
-      Monitor still in use still opens on Apps.
-    • Apps show Open, with no hours and no session count. The badge on Home
-      reads "Last played 2 h ago · 18 h total" instead of "Last played for
-      18 h", which read as though that were the last session.
+**Library**
+• The host page splits into Games, Apps and All. All opens first, so desktop,
+  Big Picture and the host's own apps are one list rather than a tab away.
+• Move an entry between Games and Apps with the right stick click (M on the
+  keyboard). The choice is kept per host.
+• Pinned games: Start on the pad or P pins the selected game, which then sits
+  under Last played in alphabetical order.
+• Resume from Home: a host that is streaming shows the game in progress, with
+  Resume in place of Play again.
+• The host page reopens on the tab you last chose, per host. A Remote Monitor
+  still in use still opens on Apps.
+• Apps show Open, with no hours and no session count. The badge on Home reads
+  "Last played 2 h ago · 18 h total" instead of "Last played for 18 h", which
+  read as though that were the last session.
 
-  Power
-    • A row per machine — the host and this device — each offering only what
-      it really supports: Keep on, Sleep, Restart or Shut down.
-    • Windows updates are offered on the row that restarts or shuts down,
-      and only when that machine has updates waiting.
-    • A host put to sleep stays asleep until Wake is chosen, so switching
-      this device back on no longer wakes the host with it. Its card reads
-      "Asleep" meanwhile.
-    • Sleeping a host that could not be woken again warns first — over
-      Tailscale away from home, or with its adapter not set to wake it.
-    • X is "Power" in the status bar, not "Shutdown".
+**Power**
+• A row per machine — the host and this device — each offering only what it
+  really supports: Keep on, Sleep, Restart or Shut down.
+• Windows updates are offered on the row that restarts or shuts down, and only
+  when that machine has updates waiting.
+• A host put to sleep stays asleep until Wake is chosen, so switching this
+  device back on no longer wakes the host with it. Its card reads "Asleep"
+  meanwhile.
+• Sleeping a host that could not be woken again warns first — away from home
+  over Tailscale, or with its adapter not set to wake it.
+• X is "Power" in the status bar, not "Shutdown".
 
-  Settings
-    • Host profiles and per-game settings live on the tabs of Settings, one
-      section at a time, switched with LB / RB, each tab showing how many
-      values it changes.
-    • An inherited value says where it comes from (Global: 4K, Docked 4K:
-      120). Y gives one row back; Reset all gives the whole set back.
-    • Profiles switch with LT / RT from anywhere in the dialog. Per-game
-      settings open with the game's cover and name the profile they
-      inherit from.
-    • A profile can be named with the pad: X offers eight ready-made names
-      such as Docked, Portable, Handheld and TV, with a field of your own
-      when a keyboard is at hand.
+**Settings**
+• Host profiles and per-game settings live on the tabs of Settings, one section
+  at a time, switched with LB / RB, each tab showing how many values it
+  changes.
+• An inherited value says where it comes from (Global: 4K, Docked 4K: 120). Y
+  gives one row back; Reset all gives the whole set back.
+• Profiles switch with LT / RT from anywhere in the dialog. Per-game settings
+  open with the game's cover and name the profile they inherit from.
+• A profile can be named with the pad: X offers eight ready-made names such as
+  Docked, Portable, Handheld and TV, with a field of your own when a keyboard
+  is at hand.
 
-  Interface
-    • Card opacity per host — 70% to 100%, starting at 90%, in the host's
-      Background.
-    • The moving background: waves in the accent colour over the lower
-      three quarters of Home, Settings and the PIN pad, twice as fast while
-      a host is streaming or a launch is starting. Off with Reduce
-      animations, paused over a dialog or a window move.
-    • An opening animation, about three seconds and skippable with any
-      button: the waves rise, the mark fades in, a band of light writes the
-      name. Settings → Session turns it off.
-    • The splash wordmark and the window mark are ArtMoon's own, and wording
-      throughout is hosts and this device, not PCs.
+**Interface**
+• Card opacity per host — 70% to 100%, starting at 90%, in the host's
+  Background.
+• The moving background: waves in the accent colour over the lower three
+  quarters of Home, Settings and the PIN pad, twice as fast while a host is
+  streaming or a launch is starting. Off with Reduce animations, paused over a
+  dialog or a window move.
+• An opening animation, about three seconds and skippable with any button: the
+  waves rise, the mark fades in, a band of light writes the name. Settings →
+  Session turns it off.
+• The splash wordmark and the window mark are ArtMoon's own, and wording is
+  hosts and this device, not PCs.
 
-  Streaming
-    • Shared clipboard: text copied on the host pastes here, and the other
-      way round, up to 32 KB, over a key that lasts one stream. Off until
-      it is turned on, and the host can refuse from its own switch.
-    • Text marked by a password manager stays out of the other side's Win+V
-      history and is cleared when the original is, within 60 seconds.
-    • Button prompts: Auto, Controller or Keyboard & mouse, in
-      Settings → Session. Pinning them to the controller suits pads that
-      send clicks and keys from one device, such as Steam Input or a Steam
-      Deck.
-    • Remote Input and Remote Monitor open beside a running game without
-      asking to quit it, and skip the wait for a game window.
-    • Host actions report what they did rather than an error — Disconnect
-      Monitor, Disconnect Input, Terminate — and a host asking for
-      confirmation gets Yes or No.
-    • Less GPU work on 4K: where one device decodes and renders, frames are
-      shown directly instead of being copied first. 1080p and 1440p are
-      unchanged.
-    • Engine and protocol brought level: faster recovery from lost video
-      packets, the decoder chosen by GPU vendor and driver, audio latency
-      held to 50 ms whatever the packet size, and the latest host discovery
-      library. The client sends its own ID to hosts instead of a placeholder
-      shared by every client.
-    • Home no longer offers the Internet Hosting Tool.
-    • Updates come from ArtMoon's own releases, and a waiting update is
-      offered on startup instead of only being found in Settings.
+**Streaming**
+• Shared clipboard: text copied on the host pastes here, and the other way
+  round, up to 32 KB, over a key that lasts one stream. Off until it is turned
+  on, and the host can refuse from its own switch.
+• Text marked by a password manager stays out of the other side's Win+V history
+  and is cleared when the original is, within 60 seconds.
+• Button prompts: Auto, Controller or Keyboard & mouse, in Settings → Session.
+  Pinning them to the controller suits pads that send clicks and keys from one
+  device, such as Steam Input or a Steam Deck.
+• Remote Input and Remote Monitor open beside a running game without asking to
+  quit it, and skip the wait for a game window.
+• Host actions report what they did rather than an error — Disconnect Monitor,
+  Disconnect Input, Terminate — and a host asking for confirmation gets Yes or
+  No.
+• Less GPU work on 4K: where one device decodes and renders, frames are shown
+  directly instead of being copied first. 1080p and 1440p are unchanged.
+• Engine and protocol brought level: faster recovery from lost video packets,
+  the decoder chosen by GPU vendor and driver, audio latency held to 50 ms
+  whatever the packet size, and the latest host discovery library. The client
+  sends its own ID to hosts instead of a placeholder shared by every client.
+• Home no longer offers the Internet Hosting Tool.
+• Updates come from ArtMoon's own releases, and a waiting update is offered on
+  startup instead of only being found in Settings.
 
-  Android
-    • The hero card's LAST SESSION panel matches the desktop: the RTT peak
-      caption ("11 peak"), the grade pill in the host's own colour, and the
-      covers of the games the session credited — a name tile where a host
-      has no cover, "+N" when more games were played than the card shows.
-    • The app picker sits on the focused app's cover art, blurred and veiled
-      behind the whole list, crossfading as the selection moves. The list
-      and detail panel are translucent over it, and the art runs full-bleed
-      from behind the header.
+**Android**
+• The hero card's LAST SESSION panel matches the desktop: the RTT peak caption
+  ("11 peak"), the grade pill in the host's own colour, and the covers of the
+  games the session credited — a name tile where a host has no cover, "+N" when
+  more games were played than the card shows.
+• The app picker sits on the focused app's cover art, blurred and veiled behind
+  the whole list, crossfading as the selection moves. The list and detail panel
+  are translucent over it, and the art runs full-bleed from behind the header,
+  with the main-screen buttons at their original size.
 
-Fixed:
-
-  • Shared clipboard: the client and the host were labelling each payload
-    differently, so every transfer was thrown away the moment it arrived —
-    and silently, because a rejected payload was never reported to anyone.
-    Both sides now use the same label, in both directions.
-  • Two merge duplications that blanked the app, and duplicated resource
-    entries that broke the Windows build.
-  • Prompts return to the controller's icons as soon as the stick or a
-    trigger is used, not only on a button press, and show them from the
-    first screen when a controller is connected.
-  • Resume no longer waits behind the launch screen. With "Wait for the game
-    to appear" on, rejoining a game the host was already running could hold
-    the launch screen over a picture that was ready; a resume now shows the
-    stream on its first frame.
-  • Pointing at a game with the mouse updates the cover and details beside
-    the list, not only the highlight on the row.
-  • A host running Tailscale could be recorded with its Tailscale address as
-    its local one, and the log then reported it moving back to the LAN every
-    few seconds.
-  • The software renderer drew full-range video at the wrong levels, a
-    display larger than 8K could crash the display list, and a game with an
-    empty name stopped the whole library from loading.
-  • Android: the picker's ambient art fills the screen properly now — the
-    header sits flush to the top, the art runs behind the list, the preview
-    and the footer, and the main-screen buttons keep their original size.
-    The downscale-blur no longer depends on an API some devices lack.
-  • Android: lost video packets are reported again, so a stream recovers
-    from a bad moment instead of carrying it.
+**Fixed — 6**
+• Prompts return to the controller's icons as soon as the stick or a trigger is
+  used, not only on a button press, and show them from the first screen when a
+  controller is connected.
+• Resume no longer waits behind the launch screen. With "Wait for the game to
+  appear" on, rejoining a game the host was already running could hold the
+  launch screen over a picture that was ready.
+• Pointing at a game with the mouse updates the cover and details beside the
+  list, not only the highlight on the row.
+• A host running Tailscale could be recorded with its Tailscale address as its
+  local one, and the log then reported it moving back to the LAN every few
+  seconds.
+• The software renderer drew full-range video at the wrong levels, a display
+  larger than 8K could crash the display list, and a game with an empty name
+  stopped the whole library from loading.
+• Android: lost video packets are reported again, so a stream recovers from a
+  bad moment instead of carrying it.
 
 --------------------------------------
-Version 1.3.0 (21/09/2026)
+**Version 1.3.0 (21/09/2026)**
 --------------------------------------
 
-New:
-
+**New — 2**
 • Library shelves: the game list is ordered into shelves on the way in — a
   "Recently played" section, most recently launched first, then a
   "Favourites" section, then the rest of the library in the host's own
@@ -156,8 +136,7 @@ New:
   with. Pinning lifts the game into the Favourites shelf; the cursor stays
   on that same game through the move, found by id rather than position.
 
-Fixed:
-
+**Fixed — 3**
 • Settings: the Native resolution option multiplied the panel by the
   desktop's UI scale, so a 1920x1200 display at 160% scaling was offered
   as 3072x1920 — a mode the host was then asked to render at. It now takes
@@ -174,11 +153,10 @@ Fixed:
   what lives at a given row index.
 
 --------------------------------------
-Version 1.2.5 (21/09/2026)
+**Version 1.2.5 (21/09/2026)**
 --------------------------------------
 
-New:
-
+**New — 1**
 • Linux: an on-screen keyboard for handhelds. The Qt Virtual Keyboard is
   now bundled into the AppImage and renders inside ArtMoon's own window,
   which is the only form that can be relied on fullscreen under gamescope
@@ -189,8 +167,7 @@ New:
   taken away. The AppImage build now fails hard if the keyboard module or
   its platform plugin is missing, rather than quietly shipping without it.
 
-Fixed:
-
+**Fixed — 3**
 • Resolution: the Settings screen no longer loses a custom value, and the
   native panel is offered as an option instead of overriding the
   configured resolution on its own.
@@ -205,19 +182,17 @@ Fixed:
   platform-tools, and the APK builds, signs and uploads again.
 
 --------------------------------------
-Version 1.2.0 (04/09/2026)
+**Version 1.2.0 (04/09/2026)**
 --------------------------------------
 
-New:
-
+**New — 1**
 • Android client joins the family: our rebranded fork of Moonlight
   Android now ships signed alongside the Windows installer and Linux
   AppImage (ArtMoon-1.2.0-android.apk). Built by CI on every v* tag,
   signed with the same release keystore, minSdk 21 (Android 5.0+).
   Consolidated into this repo as /android on 2026-09-07.
 
-Fixed:
-
+**Fixed — 3**
 • Linux AppImage: the bundle no longer carries its own copy of the glib
   family (libglib, libgobject, libgio, libgmodule, libgthread). The 1.1.1
   bundle's glib was older than the host's and missing the g_string_copy
@@ -242,8 +217,7 @@ Fixed:
   inspected for the glib family and a bundled libvulkan, so neither
   class of silent regression can ever reach a release again.
 
-Changed:
-
+**Changed — 2**
 • The bundled FFmpeg is now 9.0.1 (previously 9.0), pinned to the
   exact decoder build verified clean on the RTX 5060 mini PC at up to
   138 FPS in 4K 10-bit HDR.
@@ -255,11 +229,10 @@ Changed:
   downgrade to 1.1.x still works.
 
 --------------------------------------
-Version 1.1.0 (02/09/2026)
+**Version 1.1.0 (02/09/2026)**
 --------------------------------------
 
-Fixed:
-
+**Fixed — 1**
 • Linux AppImage: the bundled libplacebo was built without a SPIR-V
   compiler (shaderc), so Vulkan device creation failed on every GPU and
   the client could fall back to VDPAU only — no AV1 hardware decoding,
@@ -268,7 +241,7 @@ Fixed:
   decoding inside the AppImage.
 
 --------------------------------------
-Version 1.0.0 (01/09/2026)
+**Version 1.0.0 (01/09/2026)**
 --------------------------------------
 First public release of ArtMoon — a gamepad-first streaming client for
 your host gaming PC, built on the Moonlight streaming engine.
