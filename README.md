@@ -106,7 +106,7 @@ ArtMoon works with any Moonlight-compatible host, but **it works best with ArtLi
 
 ## 🔗 Paired Features (with ArtLight Control)
 
-These cross the bridge and need both apps. All switched on **per host**, in **Settings → StreamTweak** (the companion tab). Streaming itself is never affected either way.
+These cross the bridge and need both apps. All switched on **per host**, in **Settings → ArtLight** (the companion tab). Streaming itself is never affected either way.
 
 - **Host link matching** — the client measures its wired link and asks the host to match it, fixing audio dropouts from speed-mismatched links
 - **Seamless launch** — the stream window stays hidden until the game is really on screen
@@ -151,7 +151,7 @@ ArtLight Control (host PC)  →  Named Pipe  →  ArtLightControlService (LocalS
 ## 🤝 Acknowledgements
 
 - [**Moonlight**](https://github.com/moonlight-stream/moonlight-qt) — the open-source client this fork is built on; full credit to its contributors
-- [**StreamTweak**](https://github.com/FoggyBytes/StreamTweak) — the host-side companion, designed in lockstep with the original StreamLight
+- [**ArtLight**](https://github.com/onaiaku/ArtLight) — the host-side companion; the paired features above are its half of the bridge
 - [**Vibeshine**](https://github.com/Nonary/vibeshine) and [**Vibepollo**](https://github.com/Nonary/Vibepollo) — fully supported hosts
 
 > ⚠️ **Not affiliated with or endorsed by the Moonlight project.** For upstream Moonlight support, use the [official moonlight client repo](https://github.com/moonlight-stream/moonlight-qt).

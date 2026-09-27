@@ -121,8 +121,9 @@ windowed — Android streams fullscreen), V-Sync toggle, match refresh rate
 
 ## 9. ArtLight feature port — under the hood (StreamTweakBridge)
 
-The desktop client talks to ArtLight/StreamTweak on the host over plain TCP
-port 47998 (`app/StreamTweakBridge.h` in /projects/ArtMoon) — newline-terminated
+The desktop client talks to ArtLight on the host over plain TCP
+port 47998 (`app/StreamTweakBridge.h` in /projects/ArtMoon — the class keeps its
+original name) — newline-terminated
 JSON, per-request socket + watchdog. **Portable to Android as a plain Java
 TCP client; no native code needed.** Commands to port and the surfaces they feed:
 
