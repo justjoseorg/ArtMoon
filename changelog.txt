@@ -8,157 +8,133 @@ https://github.com/onaiaku/ArtMoon
 Version 1.4.0 (27/09/2026)
 --------------------------------------
 
+The 25 September library merge, plus everything fixed since: the host page
+splits into Games, Apps and All, both machines get their own power row, and
+the shared clipboard works. Lines are the desktop app unless they say
+Android.
+
 New:
 
-• Desktop: the host page now splits a host's library into Games and everything
-  that is not one — Desktop, Steam Big Picture and the host's own controls —
-  with an All tab showing every entry you can launch in one list. The page
-  opens on All, so starting from the desktop or a virtual display no longer
-  means changing tab. Any entry can be moved to the other side with the right
-  stick click (M on the keyboard), and the choice is kept per host. The tabs
-  no longer carry a count, and Virtual Display sits right after Desktop.
+  Library
+    • The host page splits into Games, Apps and All. All opens first, so
+      desktop, Big Picture and the host's own apps are one list rather than
+      a tab change away.
+    • Move an entry between Games and Apps with the right stick click (M on
+      the keyboard). The choice is kept per host.
+    • Pinned games: Start on the pad or P pins the selected game, which
+      then sits under Last played in alphabetical order.
+    • Resume from Home: a host that is streaming shows the game in progress,
+      with Resume in place of Play again.
+    • The host page reopens on the tab you last chose, per host. A Remote
+      Monitor still in use still opens on Apps.
+    • Apps show Open, with no hours and no session count. The badge on Home
+      reads "Last played 2 h ago · 18 h total" instead of "Last played for
+      18 h", which read as though that were the last session.
 
-• Desktop: pinned games. Start on the pad or P on the keyboard pins the
-  selected game, and pinned games sit together under Last played in
-  alphabetical order.
+  Power
+    • A row per machine — the host and this device — each offering only what
+      it really supports: Keep on, Sleep, Restart or Shut down.
+    • Windows updates are offered on the row that restarts or shuts down,
+      and only when that machine has updates waiting.
+    • A host put to sleep stays asleep until Wake is chosen, so switching
+      this device back on no longer wakes the host with it. Its card reads
+      "Asleep" meanwhile.
+    • Sleeping a host that could not be woken again warns first — over
+      Tailscale away from home, or with its adapter not set to wake it.
+    • X is "Power" in the status bar, not "Shutdown".
 
-• Desktop: resume from Home. While a host is streaming, its card shows the
-  game in progress with Resume in place of Play again.
+  Settings
+    • Host profiles and per-game settings live on the tabs of Settings, one
+      section at a time, switched with LB / RB, each tab showing how many
+      values it changes.
+    • An inherited value says where it comes from (Global: 4K, Docked 4K:
+      120). Y gives one row back; Reset all gives the whole set back.
+    • Profiles switch with LT / RT from anywhere in the dialog. Per-game
+      settings open with the game's cover and name the profile they
+      inherit from.
+    • A profile can be named with the pad: X offers eight ready-made names
+      such as Docked, Portable, Handheld and TV, with a field of your own
+      when a keyboard is at hand.
 
-• Desktop: power, for both machines. The Power dialog is rebuilt around the two
-  of them — the host and this device each get their own row, offering only what
-  that machine actually supports: Keep on, Sleep, Restart or Shut down. Any
-  pair works, so the host can sleep while this device shuts down, or restart
-  while you keep playing. Windows updates are offered on the row that restarts
-  or shuts down, and only when that machine has updates waiting. A host put to
-  sleep stays asleep until Wake is chosen, so switching this device back on no
-  longer wakes the host with it; its card reads "Asleep" meanwhile. The status
-  bar calls X "Power", not "Shutdown".
+  Interface
+    • Card opacity per host — 70% to 100%, starting at 90%, in the host's
+      Background.
+    • The moving background: waves in the accent colour over the lower
+      three quarters of Home, Settings and the PIN pad, twice as fast while
+      a host is streaming or a launch is starting. Off with Reduce
+      animations, paused over a dialog or a window move.
+    • An opening animation, about three seconds and skippable with any
+      button: the waves rise, the mark fades in, a band of light writes the
+      name. Settings → Session turns it off.
+    • The splash wordmark and the window mark are ArtMoon's own, and wording
+      throughout is hosts and this device, not PCs.
 
-• Desktop: putting a host to sleep warns first when it could not be woken again
-  — away from home over Tailscale, or with its network adapter not set to wake
-  the machine.
+  Streaming
+    • Shared clipboard: text copied on the host pastes here, and the other
+      way round, up to 32 KB, over a key that lasts one stream. Off until
+      it is turned on, and the host can refuse from its own switch.
+    • Text marked by a password manager stays out of the other side's Win+V
+      history and is cleared when the original is, within 60 seconds.
+    • Button prompts: Auto, Controller or Keyboard & mouse, in
+      Settings → Session. Pinning them to the controller suits pads that
+      send clicks and keys from one device, such as Steam Input or a Steam
+      Deck.
+    • Remote Input and Remote Monitor open beside a running game without
+      asking to quit it, and skip the wait for a game window.
+    • Host actions report what they did rather than an error — Disconnect
+      Monitor, Disconnect Input, Terminate — and a host asking for
+      confirmation gets Yes or No.
+    • Less GPU work on 4K: where one device decodes and renders, frames are
+      shown directly instead of being copied first. 1080p and 1440p are
+      unchanged.
+    • Engine and protocol brought level: faster recovery from lost video
+      packets, the decoder chosen by GPU vendor and driver, audio latency
+      held to 50 ms whatever the packet size, and the latest host discovery
+      library. The client sends its own ID to hosts instead of a placeholder
+      shared by every client.
+    • Home no longer offers the Internet Hosting Tool.
+    • Updates come from ArtMoon's own releases, and a waiting update is
+      offered on startup instead of only being found in Settings.
 
-• Desktop: host profiles and per-game settings are split onto the tabs of
-  Settings — one section at a time, switched with LB / RB at the ends of the
-  strip, with the number of changed values on every tab. An inherited value
-  says where it comes from (Global: 4K, Docked 4K: 120), Y gives a single row
-  back and Reset all the whole set. Host profiles switch with LT / RT from
-  anywhere in the dialog, and per-game settings open with the game's cover and
-  name the profile they inherit from. A profile can be named with the pad:
-  X offers eight ready-made names such as Docked, Portable, Handheld and TV,
-  with a field of your own when a keyboard is at hand.
-
-• Desktop: card opacity, per host — a slider in the host's Background lets the
-  moving background show through its card, 70% to 100%, starting at 90%.
-
-• Desktop: the moving background. Waves in the accent colour rise over the
-  lower three quarters of Home, Settings and the PIN pad, twice as fast while
-  a host is streaming or a launch is starting. Paused while a dialog is open or
-  the window is being moved, and off with Reduce animations.
-
-• Desktop: an opening animation — the waves rise, the mark fades in and a band
-  of light writes its name before Home appears. About three seconds, any button
-  skips it, and it can be turned off in Settings → Session. The wordmark is
-  ArtMoon's own.
-
-• Desktop: shared clipboard. Text copied on the host pastes on this device and
-  the other way round while you stream, up to 32 KB, over a key that lasts one
-  stream. Off until it is turned on, and the host can refuse from its own
-  switch. Text marked by a password manager stays out of the other side's Win+V
-  history and is cleared when the original is, within 60 seconds regardless.
-
-• Desktop: button prompts — Auto, Controller or Keyboard & mouse, in
-  Settings → Session beside the button icon set. Pinning them to the controller
-  is for pads that send mouse clicks and keys from the same device, such as
-  Steam Input or a Steam Deck, where the prompts would otherwise switch back
-  and forth.
-
-• Desktop: Remote Input and Remote Monitor are recognised as the host's own
-  controls — they open beside a running game without asking to quit it, and
-  skip the wait for a game window.
-
-• Desktop: host actions report what they did instead of an error — Disconnect
-  Monitor, Disconnect Input and Terminate — and when the host asks for
-  confirmation the client asks Yes or No and repeats the launch itself.
-
-• Android: the hero card's LAST SESSION panel matches the desktop — the RTT
-  peak caption ("11 peak"), the grade pill in the host's own colour, and the
-  covers of the games the session credited, with a name tile where a host has
-  no cover and "+N" when more games were played than the card shows.
-
-• Android: the app picker sits on the focused app's cover art, blurred and
-  veiled behind the whole list, crossfading as the selection moves. The master
-  list and the detail panel are translucent over it so the art glows through,
-  and the art runs full-bleed from the very top of the screen.
-
-Changed:
-
-• Desktop: wording throughout — hosts and this device, not PCs.
-
-• Desktop: the splash and the window mark are ArtMoon's own, and Home no longer
-  offers the Internet Hosting Tool.
-
-• Desktop: the updater points at ArtMoon's own releases, and a waiting update
-  is offered on startup instead of only being found in Settings.
-
-• Desktop: engine and protocol brought level — faster recovery from lost video
-  packets, decoder device selection by GPU vendor and driver, audio latency
-  held to 50 ms whatever the packet size, and the latest host discovery
-  library. The client now sends its own ID to hosts instead of a placeholder
-  shared by every client.
-
-• Desktop: less GPU work on 4K streams — where the graphics card decodes and
-  renders on the same device, each frame is shown directly instead of being
-  copied first. 1080p and 1440p are unchanged.
-
-• Desktop: everything under Apps shows Open and carries no hours or session
-  count, and the badge on Home reads "Last played 2 h ago · 18 h total". It
-  used to read "Last played for 18 h", as though that were the last session
-  rather than every session added up.
-
-• Desktop: the host page reopens on the tab you last chose, per host, after
-  going back to Home or closing the app. A Remote Monitor still in use still
-  opens on Apps, and a tab with nothing on it falls back to the usual one.
+  Android
+    • The hero card's LAST SESSION panel matches the desktop: the RTT peak
+      caption ("11 peak"), the grade pill in the host's own colour, and the
+      covers of the games the session credited — a name tile where a host
+      has no cover, "+N" when more games were played than the card shows.
+    • The app picker sits on the focused app's cover art, blurred and veiled
+      behind the whole list, crossfading as the selection moves. The list
+      and detail panel are translucent over it, and the art runs full-bleed
+      from behind the header.
 
 Fixed:
 
-• Desktop: the shared clipboard works end to end. The client and the host were
-  labelling each clipboard payload differently, so every transfer was thrown
-  away the moment it arrived — and silently, because a rejected payload was
-  never reported to anyone. Both sides now use the same label, in both
-  directions.
-
-• Desktop: two merge duplications that blanked the app are repaired, along
-  with duplicated resource entries that broke the Windows build.
-
-• Desktop: prompts return to the controller's icons as soon as the stick or a
-  trigger is used, not only on a button press, and show the controller's icons
-  from the first screen when a controller is connected.
-
-• Desktop: resume no longer waits behind the launch screen. With "Wait for the
-  game to appear" on, rejoining a game the host was already running could hold
-  the launch screen over a picture that was ready; a resume now shows the
-  stream on its first frame.
-
-• Desktop: pointing at a game with the mouse updates the cover and details
-  beside the list, not only the highlight on the row.
-
-• Desktop: a host running Tailscale could be recorded with its Tailscale
-  address as its local one, and the log then reported it moving back to the LAN
-  every few seconds.
-
-• Desktop: the software renderer drew full-range video at the wrong levels, a
-  display larger than 8K could crash the display list, and a game with an empty
-  name stopped the whole library from loading.
-
-• Android: the picker's ambient art fills the screen properly now — the header
-  sits flush to the top, the art runs behind the list, the preview and the
-  footer, and the main-screen buttons keep their original size. The
-  downscale-blur no longer depends on an API that is missing on some devices.
-
-• Android: lost video packets are reported again, so a stream recovers from a
-  bad moment instead of carrying it.
+  • Shared clipboard: the client and the host were labelling each payload
+    differently, so every transfer was thrown away the moment it arrived —
+    and silently, because a rejected payload was never reported to anyone.
+    Both sides now use the same label, in both directions.
+  • Two merge duplications that blanked the app, and duplicated resource
+    entries that broke the Windows build.
+  • Prompts return to the controller's icons as soon as the stick or a
+    trigger is used, not only on a button press, and show them from the
+    first screen when a controller is connected.
+  • Resume no longer waits behind the launch screen. With "Wait for the game
+    to appear" on, rejoining a game the host was already running could hold
+    the launch screen over a picture that was ready; a resume now shows the
+    stream on its first frame.
+  • Pointing at a game with the mouse updates the cover and details beside
+    the list, not only the highlight on the row.
+  • A host running Tailscale could be recorded with its Tailscale address as
+    its local one, and the log then reported it moving back to the LAN every
+    few seconds.
+  • The software renderer drew full-range video at the wrong levels, a
+    display larger than 8K could crash the display list, and a game with an
+    empty name stopped the whole library from loading.
+  • Android: the picker's ambient art fills the screen properly now — the
+    header sits flush to the top, the art runs behind the list, the preview
+    and the footer, and the main-screen buttons keep their original size.
+    The downscale-blur no longer depends on an API some devices lack.
+  • Android: lost video packets are reported again, so a stream recovers
+    from a bad moment instead of carrying it.
 
 --------------------------------------
 Version 1.3.0 (21/09/2026)
