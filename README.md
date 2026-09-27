@@ -18,7 +18,7 @@ A gamepad-first streaming client built to work best with [ArtLight](https://gith
 ---
 
 <div align="center">
-  <img width="960" alt="ArtMoon home screen" src="docs/screenshots/home.png" />
+  <img width="960" alt="ArtMoon home — hosts as tabs, the selected one online and ready to stream" src="docs/screenshots/home.png" />
 </div>
 
 <div align="center">
@@ -28,7 +28,7 @@ A gamepad-first streaming client built to work best with [ArtLight](https://gith
 </div>
 
 <div align="center">
-  <img width="960" alt="ArtMoon library" src="docs/screenshots/library.png" />
+  <img width="960" alt="ArtMoon library — Games, Apps and All, with the selected game in the spotlight" src="docs/screenshots/library.png" />
 </div>
 
 ## ✅ Compatibility
@@ -46,7 +46,13 @@ ArtMoon works with any Moonlight-compatible host, but **it works best with ArtLi
 
 ## 🔥 Features
 
-**🆕 Native refresh-rate detection**
+**🆕 Library — games, apps, everything**
+- **Games, Apps and All** — the host page splits its library into the games you play and everything that isn't one (your desktop, Steam Big Picture, the host's own apps), with an **All** tab that puts every launchable thing in one list
+- **Move anything between them** — a desktop you open every night belongs on whichever tab you say, remembered per host
+- **Pin what you actually play** — pinned games gather at the top of the library, under *Last played*
+- **Resume, straight from Home** — a host that's already streaming shows what's running, and *Play* becomes **Resume**
+
+**📺 Native refresh-rate detection**
 - The FPS selector reads what your display *actually supports* instead of a hardcoded 30/60/90/120 list — a 138 Hz monitor offers 138, a 144 Hz monitor offers 144
 - The global selector asks the display the window is on; per-game and per-host overrides consider every connected display
 - The classic presets stay in the list, merged with your display's real rates, sorted
@@ -58,21 +64,30 @@ ArtMoon works with any Moonlight-compatible host, but **it works best with ArtLi
 **🕹️ Gamepad-first, keyboard-equal**
 - Every action is reachable from the pad: D-pad across host tabs, library, settings tabs and dialogs, with a clickable prompt bar along the bottom
 - **Prompts follow the device in your hands** — touch the keyboard and each glyph becomes the key to press; pick the pad back up and they return to that controller's own icons (Xbox / PlayStation / Nintendo, auto-detected or forced)
+- **Prompts can be pinned to the pad** — Auto, Controller or Keyboard & mouse, for the pads that send clicks and keys from the same device, like Steam Input or a Steam Deck
 - **Rebindable shortcuts** — every in-stream keyboard hotkey and all three controller combos, in *Settings → Shortcuts*
 
 **🏠 Home and the host page**
 - **Home** is your hosts as tabs under the wordmark, the selected one filling the screen: name, state, addresses, stream settings and actions at once
 - **The host page** puts the library down the left at full height and the game in the spotlight beside it — cover, name, store, and the right verb (*Resume* or *Play*)
-- **Per-host backgrounds** — a colour you pick or a picture of your own, with the card's gradient derived from it
+- **Per-host backgrounds** — a colour you pick or a picture of your own, with the card's gradient derived from it, and the card's opacity set to taste
 - **Your accent colour** — five presets or any hex code. Status colours never follow it: online stays green, *Shutdown* red
+
+**🆕 Power — both machines**
+- **A row per machine** — the host and this device each offer only what they can actually do: keep on, sleep, restart, shut down
+- **Windows Update** sits on the row that restarts or shuts down, and only appears when there's something waiting
+- **Sleep stays asleep** — a host you've put to sleep waits to be woken instead of being roused by this device coming back on
+- Asks before it sleeps a host it can't wake again — away from home, or a host without wake-on-LAN
 
 **🎬 In-stream**
 - **Performance overlay, built line by line** — eleven lines to choose from, switched on and off on the overlay itself
 - **Stream Settings panel** — change resolution, frame rate, bitrate, HDR and frame pacing **while streaming**
 - **Custom resolutions** — any width and height, not just the presets
 - **Match refresh rate** — runs your display at the stream's frame rate for the session (Fullscreen), per-host overridable
+- **🆕 Shared clipboard** — copy here, paste there, both ways, up to 32 KB at a time. Off until you switch it on, and the host can refuse. Passwords stay out of the other side's history
+- **Less work for the GPU at 4K** — frames reach the screen from wherever they were decoded, instead of being copied across the machine first
 
-**🆕 Built-in updater**
+**⬆️ Built-in updater**
 - ArtMoon checks GitHub releases and tells you when a new version is out — one press of **Update Now** and it updates itself: download, quit, install, relaunch. No manual downloads, no terminal on Windows
 - **Linux** reuses the one-line install script under the hood, so updating is the same command as installing
 - The version card shows what's installed, what's latest, and clickable changelogs for every release
@@ -81,7 +96,13 @@ ArtMoon works with any Moonlight-compatible host, but **it works best with ArtLi
 - Ten tabs, pill-style selectors, inline subtitles instead of tooltips
 - **Per-host profiles** — up to three named profiles per host, each overriding resolution, frame rate, bitrate, HDR, codec, display mode, V-Sync, frame pacing, audio and more
 - **Per-game overrides** on top of the active profile
+- **Profiles and overrides on tabs** — one section at a time with LB/RB to move between them, and the number of values you've changed shown on each
+- **Inherited values say where they come from** — *Global: 4K*, *Docked 4K: 120* — and one button clears a row, or the whole set
 - Every FPS list is built from what your display actually reports — no hardcoded presets where your hardware can speak for itself
+
+**🤖 Phone, tablet and TV**
+- The same client on Android, with a picker built for a remote and a UI that scales from a phone in your hand to a TV across the room
+- Last session sits on the Home hero card — what you played, how it went, and a way straight back in
 
 ## 🔗 Paired Features (with ArtLight Control)
 
