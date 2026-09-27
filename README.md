@@ -10,7 +10,6 @@ A gamepad-first streaming client built to work best with [ArtLight](https://gith
 
 <a href="https://github.com/onaiaku/ArtMoon"><img alt="Platform" src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20%7C%20Linux%20%7C%20Android-blue.svg"></a>
 <a href="https://github.com/onaiaku/ArtMoon"><img alt="Framework" src="https://img.shields.io/badge/Framework-Qt%206-brightgreen.svg"></a>
-<a href="https://github.com/moonlight-stream/moonlight-qt"><img alt="built on Moonlight" src="https://img.shields.io/badge/built%20on-Moonlight-blue?&logo=github"></a>
 <a href="https://www.gnu.org/licenses/gpl-3.0"><img alt="License: GPL v3" src="https://img.shields.io/badge/License-GPLv3-green.svg"></a>
 
 </div>
