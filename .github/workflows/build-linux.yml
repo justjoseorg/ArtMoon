@@ -22,12 +22,43 @@ on:
 
 jobs:
   build:
+    # The runner only HOSTS the container. The artifact is built INSIDE it, and the
+    # container's glibc becomes the floor the AppImage needs at runtime. Building on
+    # the bare ubuntu-24.04 runner put a GLIBC_2.38 floor on the bundle: all 21
+    # libraries that demanded it (libcrypto, libsystemd, libxkbcommon, libdbus,
+    # libSDL3, libplacebo, libva, ...) came from the runner image, none from our code.
+    # The AppImage therefore could not start on Ubuntu 22.04 or Debian 12.
+    # jammy = glibc 2.35 = the oldest still-supported Ubuntu LTS, which is the bar the
+    # AppImage catalog tests against ("can run on the oldest still-supported LTS
+    # release of Ubuntu"). Nothing else about the build changes: Qt still comes from
+    # aqtinstall, so jammy's 6.2.4 distro Qt is irrelevant (that was the original
+    # reason for leaving jammy, and it stopped applying once aqtinstall landed).
     runs-on: ubuntu-24.04
+    container: ubuntu:22.04
     timeout-minutes: 120
     env:
       QT_VERSION: 6.8.3
+      # A container has no /dev/fuse, so an AppImage cannot mount itself in order to
+      # run. linuxdeploy and linuxdeploy-plugin-qt ARE AppImages, and without this they
+      # die with "Cannot mount AppImage, please check your FUSE setup" (verified in a
+      # jammy container: direct run exits 141, installing libfuse2 does not help
+      # because the device itself is absent, this variable makes it work).
+      APPIMAGE_EXTRACT_AND_RUN: "1"
 
     steps:
+      # ubuntu:22.04 is a bare image, not a GitHub runner image: git, sudo, wget, the
+      # compiler and ninja are all absent, and checkout needs git before it can even
+      # run. Everything the runner image used to supply implicitly is installed here.
+      - name: Bootstrap the container
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            sudo git wget curl ca-certificates \
+            build-essential cmake ninja-build pkg-config \
+            python3 python3-pip python-is-python3 bison flex
+          # python-is-python3: shaderc's build script (built from source below) is
+          # invoked as `env python`, and jammy has no bare `python`.
+
       - name: Checkout Repository
         uses: actions/checkout@v5
         with:
@@ -46,8 +77,14 @@ jobs:
           libxext-dev libxi-dev libxinerama-dev libxkbcommon-dev libxrandr-dev libxss-dev libxt-dev libxv-dev libxxf86vm-dev libxcb-dri3-dev libx11-xcb-dev \
           libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 \
           libxfixes-dev libxtst-dev wayland-protocols libwayland-dev libopus-dev libvdpau-dev libgl-dev libpipewire-0.3-dev liburing-dev \
-          libvulkan-dev libshaderc-dev libtool autoconf automake
-          sudo pip3 install --break-system-packages aqtinstall
+          libvulkan-dev libtool autoconf automake
+          # NB: no libshaderc-dev here. jammy ships no shaderc at all (not libshaderc-dev,
+          # not libshaderc1, not even glslc) — libplacebo needs the pkg-config module named
+          # 'shaderc', so it is built from source in its own step below. On noble the same
+          # package was simply installed from apt.
+          # Plain pip: --break-system-packages is a noble-ism (PEP 668) and jammy's pip 22
+          # rejects the flag outright.
+          sudo pip3 install aqtinstall
           # Arch name varies by Qt version (gcc_64 pre-6.7, linux_gcc_64 after)
           QT_ARCH=$(aqt list-qt linux desktop --arch "$QT_VERSION" | grep -oE '[a-z_]*gcc_64' | tail -1)
           echo "Using Qt arch: $QT_ARCH"
@@ -79,7 +116,7 @@ jobs:
           echo "Qt installed at: $QT_DIR"
           sudo ln -sf "$QT_DIR/bin/qmake" "$QT_DIR/bin/qmake6"
           echo "$QT_DIR/bin" >> "${GITHUB_PATH}"
-          sudo pip3 install --break-system-packages meson
+          sudo pip3 install meson
           mkdir -p dep_root/{bin,include,lib}
           echo "DEP_ROOT=$PWD/dep_root" >> "${GITHUB_ENV}"
           echo "$PWD/dep_root/bin" >> "${GITHUB_PATH}"
@@ -172,6 +209,34 @@ jobs:
           ./configure --enable-x11
           make -j$(nproc)
           sudo make install
+
+      - name: Build shaderc
+        working-directory: deps
+        run: |
+          # jammy ships NO shaderc at all — not libshaderc-dev, not libshaderc1, not even
+          # glslc (noble, where this used to build, shipped libshaderc-dev and it came
+          # from apt). libplacebo's -Dshaderc=enabled resolves the pkg-config module
+          # literally named 'shaderc', so it gets compiled here.
+          # Pinned to v2023.8 on purpose: that is exactly the version noble shipped, i.e.
+          # the shaderc the currently-working AV1/Vulkan decode path was built against.
+          # A different version generates different SPIR-V, which is not a variable worth
+          # introducing in the same change as a glibc floor fix.
+          git clone --depth 1 --branch v2023.8 https://github.com/google/shaderc
+          pushd shaderc
+          python3 utils/git-sync-deps
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DSHADERC_SKIP_TESTS=ON -DSHADERC_SKIP_EXAMPLES=ON \
+            -DSHADERC_SKIP_COPYRIGHT_CHECK=ON
+          # -j2 for the same reason qtwayland uses it: heavy C++ trees have been
+          # OOM-killed (cc1plus killed) on this repo's runners before.
+          cmake --build build -j2
+          sudo cmake --install build
+          popd
+          # Fail loudly here rather than as a confusing meson error two steps later.
+          # Without shaderc the Vulkan video path has no SPIR-V compiler at all.
+          pkg-config --exists shaderc || { echo "shaderc.pc missing after build - libplacebo would have no SPIR-V compiler"; ls -la /usr/local/lib/pkgconfig/ /usr/local/lib/; exit 1; }
+          echo "Installed shaderc $(pkg-config --modversion shaderc)"
 
       - name: Checkout libplacebo
         uses: actions/checkout@v5
