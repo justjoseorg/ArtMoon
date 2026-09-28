@@ -445,6 +445,54 @@ void ComputerModel::requestHostNetInfo(int computerIndex)
     });
 }
 
+void ComputerModel::requestHostLastSession(int computerIndex)
+{
+    if (!bridgeAllowed(computerIndex)) return;   // see requestHostNetInfo()
+    if (computerIndex < 0 || computerIndex >= m_Computers.count()) return;
+
+    NvComputer* computer = m_Computers[computerIndex];
+    QString address;
+    {
+        QReadLocker lock(&computer->lock);
+        address = computer->activeAddress.address();
+    }
+    if (address.isEmpty()) return;
+
+    // Same shape as the NETINFO reader above. Everything the host sends is passed straight
+    // through EXCEPT "has", which is folded in here — an empty map is the only thing QML has to
+    // test, and a host that has never streamed would otherwise need its own branch on the far
+    // side of the signal.
+    //
+    // ⚠️ -1 means "the host never measured this" and is carried through as -1 rather than
+    // normalised to 0: the card draws a dash for those, and a 0 would be this client inventing a
+    // measurement it was explicitly not given.
+    m_streamTweakBridge.requestLastSession(address, [this, computerIndex](const QString& reply) {
+        QVariantMap out;
+        if (!reply.isEmpty() && !reply.startsWith(QStringLiteral("ERR"))) {
+            QJsonDocument doc = QJsonDocument::fromJson(reply.toUtf8());
+            if (doc.isObject()) {
+                QJsonObject o = doc.object();
+                if (o.value(QStringLiteral("has")).toBool()) {
+                    out[QStringLiteral("ago")]        = o.value(QStringLiteral("ago")).toString();
+                    out[QStringLiteral("duration")]   = o.value(QStringLiteral("duration")).toString();
+                    out[QStringLiteral("hasGrade")]   = o.value(QStringLiteral("has_grade")).toBool();
+                    out[QStringLiteral("grade")]      = o.value(QStringLiteral("grade")).toString();
+                    out[QStringLiteral("gradeColor")] = o.value(QStringLiteral("grade_color")).toString();
+                    out[QStringLiteral("rttMs")]      = o.value(QStringLiteral("rtt_ms")).toInt(-1);
+                    out[QStringLiteral("rttPeakMs")]  = o.value(QStringLiteral("rtt_peak_ms")).toInt(-1);
+                    out[QStringLiteral("hostLatMs")]  = o.value(QStringLiteral("host_latency_ms")).toInt(-1);
+                    out[QStringLiteral("dropsPct")]   = o.value(QStringLiteral("drops_pct")).toDouble(-1.0);
+                    // games_total and the credited-games cover strip are deliberately NOT read.
+                    // The card shows the last session's numbers; that strip was the right-hand
+                    // half of a two-column layout this card no longer has, and the artwork in it
+                    // is the host's at the host's own size (see HostStage.qml, 1.5.0).
+                }
+            }
+        }
+        emit hostLastSessionReceived(computerIndex, out);
+    });
+}
+
 void ComputerModel::restoreHostLink(int computerIndex)
 {
     if (!bridgeAllowed(computerIndex)) return;   // see requestHostNetInfo()

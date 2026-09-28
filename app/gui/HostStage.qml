@@ -215,6 +215,25 @@ Item {
     readonly property bool _hasLastPlayed:
         !addMode && lastPlayed && lastPlayed.name !== undefined && lastPlayed.name !== ""
 
+    // ── The host's last session (1.5.0) ──────────────────────────────────────
+    /*
+     * How the last session on this HOST went, from ComputerModel::requestHostLastSession():
+     * ago, duration, grade, RTT and its peak, the host's own latency, and the drop rate.
+     *
+     * ⚠️ Alongside the last-played block above, not instead of it. They are two different facts
+     * and both are true at once — lastPlayed is what YOU played here, this is what the host last
+     * ran, which may have been another device's session. It was dropped in the 6.0.0 redesign
+     * because it was the right-hand half of a two-column card that no longer exists, not because
+     * the numbers were wrong; Nik asked for them back on the home card (2026-09-28).
+     *
+     * An empty map means draw nothing at all: no bridge, an unauthorised host, or a host that has
+     * never streamed. There is no empty state, exactly like the block above.
+     */
+    property var lastSession: ({})
+
+    readonly property bool _hasLastSession:
+        !addMode && lastSession && Object.keys(lastSession).length > 0
+
     // ── Now streaming (6.0.0) ────────────────────────────────────────────────
     /*
      * What the host is streaming right now, from ComputerModel::runningAppFor(): name and
@@ -1146,6 +1165,206 @@ Item {
                         font.family: Theme.family
                         font.pixelSize: stage._px(Theme.fontH1)
                         font.weight: Font.DemiBold
+                    }
+                }
+            }
+        }
+
+        // ── The host's last session (1.5.0, restored) ─────────────────────────
+        /*
+         * What the host's own dashboard says the last session did, said again here — the one
+         * place where knowing it changes a decision, because this is the screen you are on when
+         * deciding whether to stream again.
+         *
+         * Moved, not rewritten. Until the 6.0.0 redesign this was the card's RIGHT column, top
+         * aligned with the chip row and hung off the right edge, because the card was a
+         * two-column thing. The card is now a single column and the game block lives outside it,
+         * so the panel sits under the field row and aligns with the fields — the same numbers,
+         * on the card's own grid.
+         *
+         * No frame and no fill: it is part of the card, not a box resting on it. A bordered panel
+         * made the same information read as a second, foreign surface. Sitting directly on the
+         * backdrop keeps it the lower half of one card. The badge below still borrows the state
+         * chips' recipe — same height, radius, border, typography — because that is what makes it
+         * read as the card's own row rather than a block that happens to be here.
+         *
+         * No cover strip. The credited-games artwork it used to carry was sized for the old
+         * right-hand column, and the numbers are the part worth reading from the card.
+         */
+        Item {
+            id: lastSessionPanel
+            visible: stage._hasLastSession
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: stage._px(38)
+            anchors.rightMargin: stage._px(38)
+            height: lastCol.implicitHeight
+
+            // Directly under the fields — and never into the buttons.
+            //
+            // ⚠️ fieldRow's own height is not a measure of anything useful here: it is stretched
+            // from below the name block all the way down to the action row. Its CONTENT height is
+            // where the fields actually end, so the panel measures from that.
+            //
+            // The clamp is the half that matters on a short card. The fields and the buttons can
+            // be close enough that the ideal offset puts this panel under Enter/Profiles/Options,
+            // and a doubled-up grid is worse than a panel sitting a little high — so the panel
+            // gives up the gap before it gives up the buttons. On a card with room, the min() is
+            // never taken.
+            property real _idealY: fieldRow.y + fieldRow.implicitHeight + stage._px(28)
+            y: Math.min(_idealY, actionRow.y - height - stage._px(20))
+
+            readonly property var _s: stage.lastSession
+
+            // -1 is the host saying "never measured", which is not the same as zero — a client
+            // that printed 0 ms would be inventing a result it was explicitly not given.
+            function _num(v, decimals) {
+                return (v === undefined || v === null || v < 0)
+                       ? "—" : Number(v).toFixed(decimals)
+            }
+
+            Column {
+                id: lastCol
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                spacing: stage._px(18)
+
+                // When, and how long. The badge carries no status dot, unlike the chips above:
+                // those report a state that can be good or bad, this reports when — and a
+                // coloured dot would imply a verdict the grade below is already giving.
+                Rectangle {
+                    anchors.left: parent.left
+                    height: stage._px(30)
+                    width: agoRow.implicitWidth + stage._px(26)
+                    radius: stage._px(6)
+                    color: "transparent"
+                    border.color: Theme.line
+                    border.width: 1
+
+                    Row {
+                        id: agoRow
+                        anchors.centerIn: parent
+                        spacing: stage._px(9)
+
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: qsTr("LAST SESSION")
+                            color: stage._onBg2
+                            font.family: Theme.family
+                            font.pixelSize: stage._px(15)
+                            font.weight: Font.DemiBold
+                            font.letterSpacing: stage._u * 1.1
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: text.length > 0
+                            text: lastSessionPanel._s.ago !== undefined
+                                  ? String(lastSessionPanel._s.ago).toUpperCase() : ""
+                            color: stage._onBg3
+                            font.family: Theme.family
+                            font.pixelSize: stage._px(15)
+                            font.weight: Font.DemiBold
+                            font.letterSpacing: stage._u * 1.1
+                        }
+                    }
+                }
+
+                // Grade and duration. The grade keeps its tinted pill: it is a verdict, and the
+                // colour is the whole point of it. The duration does not — a bordered box around
+                // a plain fact was a second frame this panel did not need.
+                Row {
+                    anchors.left: parent.left
+                    spacing: stage._px(10)
+
+                    Rectangle {
+                        visible: lastSessionPanel._s.hasGrade === true
+                                 && lastSessionPanel._s.grade !== undefined
+                                 && lastSessionPanel._s.grade !== ""
+                        width: gradeText.implicitWidth + stage._px(30)
+                        height: stage._px(42)
+                        radius: stage._px(8)
+                        color: Qt.rgba(gradeText.color.r, gradeText.color.g, gradeText.color.b, 0.16)
+
+                        Text {
+                            id: gradeText
+                            anchors.centerIn: parent
+                            text: lastSessionPanel._s.grade !== undefined
+                                  ? lastSessionPanel._s.grade : ""
+                            color: (lastSessionPanel._s.gradeColor !== undefined
+                                    && lastSessionPanel._s.gradeColor !== "")
+                                   ? lastSessionPanel._s.gradeColor : stage._onBg
+                            font.family: Theme.family
+                            font.pixelSize: stage._px(21)
+                            font.weight: Font.DemiBold
+                        }
+                    }
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: lastSessionPanel._s.duration !== undefined
+                                 && lastSessionPanel._s.duration !== ""
+                        text: lastSessionPanel._s.duration !== undefined
+                              ? lastSessionPanel._s.duration : ""
+                        color: stage._onBg2
+                        font.family: Theme.family
+                        font.pixelSize: stage._px(21)
+                        leftPadding: stage._px(4)
+                    }
+                }
+
+                // The three headline numbers.
+                Row {
+                    id: metricRow
+                    anchors.left: parent.left
+                    spacing: stage._px(34)
+
+                    Repeater {
+                        model: [
+                            { value: lastSessionPanel._num(lastSessionPanel._s.rttMs, 0),     unit: "ms",
+                              caption: lastSessionPanel._num(lastSessionPanel._s.rttPeakMs, 0) === "—"
+                                       ? qsTr("RTT")
+                                       : lastSessionPanel._num(lastSessionPanel._s.rttPeakMs, 0) + " " + qsTr("peak") },
+                            { value: lastSessionPanel._num(lastSessionPanel._s.hostLatMs, 1), unit: "ms",
+                              caption: qsTr("Host lat.") },
+                            { value: lastSessionPanel._num(lastSessionPanel._s.dropsPct, 1),  unit: "%",
+                              caption: qsTr("Drops") }
+                        ]
+
+                        delegate: Column {
+                            spacing: stage._px(4)
+
+                            Row {
+                                spacing: stage._px(4)
+                                // Full white and semibold, the same treatment the field values
+                                // get: these are the card's numbers, and it says so in the
+                                // comment on the field delegate above.
+                                Text {
+                                    anchors.bottom: parent.bottom
+                                    text: modelData.value
+                                    color: stage._onBg
+                                    font.family: Theme.family
+                                    font.pixelSize: stage._px(46)
+                                    font.weight: Font.DemiBold
+                                }
+                                Text {
+                                    anchors.bottom: parent.bottom
+                                    anchors.bottomMargin: stage._px(7)
+                                    visible: modelData.value !== "—"
+                                    text: modelData.unit
+                                    color: stage._onBg3
+                                    font.family: Theme.family
+                                    font.pixelSize: stage._px(18)
+                                }
+                            }
+                            Text {
+                                text: modelData.caption.toUpperCase()
+                                color: stage._onBg3
+                                font.family: Theme.family
+                                font.pixelSize: stage._px(14)
+                                font.letterSpacing: stage._u * 1.6
+                            }
+                        }
                     }
                 }
             }

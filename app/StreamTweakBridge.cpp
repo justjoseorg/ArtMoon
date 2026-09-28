@@ -243,6 +243,13 @@ void StreamTweakBridge::requestNetInfo(const QString& hostAddress, ResponseCallb
     sendRequest(hostAddress, QStringLiteral("NETINFO"), std::move(onResult));
 }
 
+void StreamTweakBridge::requestLastSession(const QString& hostAddress, ResponseCallback onResult)
+{
+    // The host answers with a JSON object. {"has":false} is the ordinary reply from a host that
+    // has not streamed yet — not an error, and the one case the card must draw nothing for.
+    sendRequest(hostAddress, QStringLiteral("LASTSESSION"), std::move(onResult));
+}
+
 void StreamTweakBridge::sendRestore(const QString& hostAddress, ResponseCallback onResult)
 {
     // "I have finished" — sent only when the user deliberately stops the session, never on a

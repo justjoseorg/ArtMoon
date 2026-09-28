@@ -156,16 +156,22 @@ public:
     void sendSetSpeed(const QString& hostAddress, quint64 mbps, ResponseCallback onResult);
 
     /*
-     * ⚠️ requestLastSession() — the LASTSESSION verb — was removed here in 5.7.0, and the
-     * host still implements it: this is the client no longer asking, not the protocol
-     * losing a command.
+     * ⚠️ requestLastSession() — the LASTSESSION verb — was removed here in 5.7.0 and put BACK
+     * in 1.5.0. The host implemented it the whole time: that removal was the client no longer
+     * asking, not the protocol losing a command, so restoring it needs nothing from ArtLight.
      *
-     * The card it fed now shows what THIS client last played, from a record kept on this
-     * machine (settings/playtime.h) and artwork already in the box art cache. That answers
-     * a better question — the host's reply described whatever had streamed, possibly from
-     * another device, and needed StreamTweak authorised to exist at all — so the call had
-     * no callers left. If it is ever wanted back, the host end never went away.
+     * Why it went: the card it fed was replaced by what THIS client last played, from a record
+     * kept on this machine (settings/playtime.h), because the host's reply describes whatever
+     * had streamed — possibly from another device — and needs StreamTweak authorised to exist
+     * at all. That reasoning still holds and the local record stays exactly where it is.
+     *
+     * Why it is back: those are two different facts, not two versions of one. The local record
+     * answers "what did *I* last play here"; this answers "how did the last session on this
+     * host actually go" — the grade, the RTT peak, and the host's own latency figures, none of
+     * which this machine ever measured. Nik asked for the second one back on the home card
+     * (2026-09-28) after seeing it on the Android build, which never lost it.
      */
+    void requestLastSession(const QString& hostAddress, ResponseCallback onResult);
 
     /**
      * Asynchronously asks the host whether Tailscale is installed and active.

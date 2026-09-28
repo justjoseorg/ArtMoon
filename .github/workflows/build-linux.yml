@@ -65,13 +65,23 @@ jobs:
             sudo git wget curl ca-certificates \
             build-essential cmake ninja-build pkg-config \
             python3 python3-pip python-is-python3 \
-            bison flex file
+            bison flex file libssl-dev zlib1g-dev
           # python-is-python3: shaderc's build script (built from source below) is
           # invoked as `env python`, and jammy has no bare `python`.
           # file: on every runner image, absent from bare jammy; linuxdeploy uses it to
           # identify binary types. Deliberately NOT adding desktop-file-utils: a
           # validator can reject an AppImage that appimagetool previously accepted on
           # the runner, and that is a risk this change does not need to take.
+          # libssl-dev: THE reason the first container build died at Build Binaries with
+          # "Project ERROR: openssl development package not found" — app.pro has
+          # `PKGCONFIG += openssl` unconditionally, and every runner image ships
+          # libssl-dev, so the Setup environment list below never had to name it.
+          # jammy's is OpenSSL 3.0.2, which is what aqt's Qt 6.8.3 was built against.
+          # zlib1g-dev: same argument, added in the same breath rather than spending a
+          # second 12-minute run discovering it. It cannot reject anything.
+          # These belong here rather than in Setup environment below: that step lists
+          # what ArtMoon needs, and this one lists what the runner image used to supply
+          # for free.
 
       - name: Checkout Repository
         uses: actions/checkout@v5

@@ -237,6 +237,18 @@ public:
     // than StreamTweak 8.1.0.
     Q_INVOKABLE void requestHostNetInfo(int computerIndex);
 
+    /// Asks the host how its LAST session went — the grade, the RTT and its peak, the host's own
+    /// latency, and the drop rate — for the home card's last-session panel. Emits
+    /// hostLastSessionReceived with an empty map when there is nothing to show: no bridge, an
+    /// unauthorised host, a host that has never streamed, or an unparseable reply. The card
+    /// draws nothing for an empty map, so every one of those failures is quiet by design.
+    ///
+    /// ⚠️ This describes the last session on the HOST, which may have been another device's.
+    /// That is the point of it — ComputerModel::lastPlayedFor() answers the different question of
+    /// what THIS client last played — and it is why it is a separate request rather than a field
+    /// on that record.
+    Q_INVOKABLE void requestHostLastSession(int computerIndex);
+
     /// Asks the host to put its link speed back. The host never decides this for itself — it
     /// holds the streaming speed until told — so this is the only thing that ends a switch,
     /// sent when the user answers the prompt on returning to the host list, or picks the
@@ -331,6 +343,11 @@ signals:
 
     /** @param info {allowsLinkControl, currentMbps} — empty map on hosts without NETINFO. */
     void hostNetInfoReceived(int computerIndex, QVariantMap info);
+
+    /// The host's last session, for the home card. Empty map = nothing to draw; see
+    /// requestHostLastSession(). "has" is already folded in: if it is false the map is empty,
+    /// so QML never has to test the host's own flag itself.
+    void hostLastSessionReceived(int computerIndex, QVariantMap info);
 
     void appStoresReceived(int computerIndex, QVariantMap stores);
     void updateStateReceived(int computerIndex, bool pending);

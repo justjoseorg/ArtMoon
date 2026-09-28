@@ -1170,6 +1170,14 @@ FocusScope {
             // host's app list and could not be launched anyway.
             property var    stLastPlayed: ({})
 
+            // How the HOST's last session went — grade, RTT and its peak, the host's own
+            // latency, drop rate — from ComputerModel::requestHostLastSession(). A different
+            // fact from stLastPlayed above, not a newer version of it: that one is what this
+            // client played here, this one is what the host last ran, whoever ran it. An empty
+            // map means the card draws no panel: no bridge, unauthorised, never streamed, or a
+            // reply that could not be parsed.
+            property var    stLastSession: ({})
+
             // This device's wired link to *this* host (0 when Wi-Fi/Tailscale/unknown) versus
             // the host's own. Both are needed before claiming a switch is coming: promising
             // one the host would refuse is worse than saying nothing.
@@ -1243,6 +1251,7 @@ FocusScope {
                     stageSeedColor:    model.stageSeed,
                     stageOpacity:      model.stageOpacity,
                     auth:              stAuth,
+                    lastSession:       stLastSession,
                     linkText:          homeScreen.formatStreamTweakStatus(stSpeedRaw),
                     willSwitchLink:    willSwitchLink,
                     cantSwitchLink:    cantSwitchLink,
@@ -1307,6 +1316,7 @@ FocusScope {
                 model.activeProfileName, model.stageColorFrom, model.stageColorTo,
                 model.stageImage, model.stageSeed, model.stageOpacity, stAuth, stSpeedRaw,
                 willSwitchLink, cantSwitchLink, stLastPlayed, stMatchLink,
+                stLastSession,
                 stLinkChanging, stSwitched, stAllowsLink, stSessionActive,
                 // What _runningFor() reads to hide the PIN unlock's own session (6.0.0).
                 homeScreen.wakeActive, homeScreen.wakeIndex, homeScreen._unlockCarrierIndex
@@ -1333,6 +1343,7 @@ FocusScope {
                 stLinkChanging = false
                 stLocalMbps = 0
                 stLastPlayed = ({})
+                stLastSession = ({})
             }
 
             Component.onCompleted: {
@@ -1374,6 +1385,17 @@ FocusScope {
                 running: probe.stEnabled && model.online && model.paired
                          && probe.stAuth === "authorized"
                 onTriggered: homeScreen.computerModel.requestHostNetInfo(index)
+            }
+
+            // The host's last session, on a slower clock than the link poll above. It only
+            // changes when a session ENDS, so asking every 2 s would fetch the host's whole
+            // session payload thirty times a minute to be told the same thing.
+            Timer {
+                interval: 10000
+                repeat: true
+                running: probe.stEnabled && model.online && model.paired
+                         && probe.stAuth === "authorized"
+                onTriggered: homeScreen.computerModel.requestHostLastSession(index)
             }
 
             // Poll the access state until it settles (authorized, or "open" when the host
@@ -1436,6 +1458,20 @@ FocusScope {
                     probe.stLinkChanging = false
                     if (info.currentMbps !== undefined && info.currentMbps > 0)
                         probe.stSpeedRaw = String(info.currentMbps)
+                }
+
+                function onHostLastSessionReceived(idx, info) {
+                    if (idx !== index) return
+
+                    // ⚠️ An empty map is IGNORED here, and this is the one place in this file
+                    // where that is the right call. Empty means either "the host has never
+                    // streamed" or "that request failed", and the reply carries nothing that
+                    // tells the two apart — so clearing on it would blink the panel off and back
+                    // every time a packet dropped. Holding the last answer is also the honest
+                    // reading: the last session on that host is still the last session. The map
+                    // is cleared where the bridge is switched off, in onStEnabledChanged.
+                    if (info && Object.keys(info).length > 0)
+                        probe.stLastSession = info
                 }
 
                 function onStreamTweakAuthReceived(idx, state, pin) {
