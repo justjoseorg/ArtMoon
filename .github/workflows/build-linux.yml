@@ -63,7 +63,7 @@ jobs:
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y \
             sudo git wget curl ca-certificates \
-            build-essential cmake ninja-build pkg-config \
+            build-essential cmake ninja-build pkgconf \
             python3 python3-pip python-is-python3 \
             bison flex file libssl-dev zlib1g-dev
           # python-is-python3: shaderc's build script (built from source below) is
@@ -79,6 +79,19 @@ jobs:
           # jammy's is OpenSSL 3.0.2, which is what aqt's Qt 6.8.3 was built against.
           # zlib1g-dev: same argument, added in the same breath rather than spending a
           # second 12-minute run discovering it. It cannot reject anything.
+          # pkgconf, NOT pkg-config — a behavioural difference, not a rename. jammy's
+          # `pkg-config` is the classic 0.29.2, which does not implement the `Provides:`
+          # field; jammy's `pkgconf` does, and installing it takes over
+          # /usr/bin/pkg-config (it Provides/Conflicts pkg-config). noble's pkg-config
+          # IS pkgconf, so this restores the implementation the build was written
+          # against rather than changing tools. Why it matters here: sdl2-compat (built
+          # from source below) deliberately ships `sdl2-compat.pc` carrying
+          # `Provides: sdl2 = <ver>`, NOT an `sdl2.pc`. Under classic pkg-config
+          # `pkg-config --exists sdl2` is therefore false and qmake reports "sdl2
+          # development package not found" while the shim sits right there in
+          # /usr/local. Verified in a jammy container: classic pkg-config resolves a
+          # Provides name NO, pkgconf resolves it YES. This also means the other
+          # Provides-based modules in this chain resolve the way they did on noble.
           # These belong here rather than in Setup environment below: that step lists
           # what ArtMoon needs, and this one lists what the runner image used to supply
           # for free.
