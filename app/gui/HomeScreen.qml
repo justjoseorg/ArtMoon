@@ -377,8 +377,10 @@ FocusScope {
      * entries share a name (a 2.0 server's running-game copy carries the game's title). It
      * builds its preferences through the same buildPrefs() cascade as createSessionForApp().
      *
-     * No Stop here, by decision: quitting a game — and the confirmation that goes with it —
-     * stays on the host page.
+     * ⚠️ Stop was ABSENT here by decision once — "quitting a game, and the confirmation that
+     * goes with it, stays on the host page" (6.0.0). That was overruled on 28/09/2026 by
+     * request: the card ends a session as well as rejoining one. See stopRunning below, which
+     * reuses the host page's own flow rather than inventing a second one.
      */
     function resumeRunning(h) {
         if (!h || !h.online || !h.paired) return
@@ -401,6 +403,39 @@ FocusScope {
         }
 
         _launchFromCard(h, running.name, running.cover, session, true)
+    }
+
+    /*
+     * ── Stop the session running on the host (28/09/2026, by request) ────────────────────
+     *
+     * The card's Stop, under Resume. The same operation the host page puts behind X on the
+     * running row — ComputerModel::stopRunningApp() → ComputerManager::quitRunningApp() → the
+     * host's own HTTP API — and deliberately the same FLOW rather than a second one:
+     * confirmation first, then QuitSegue, which is also the one place that tells the host the
+     * session "finished" so it puts the link question back rather than reading the drop as a
+     * pause. A stop that skipped that would leave the host believing the stream is still up.
+     *
+     * ⚠️ Resume above it is only ever for a session THIS client may rejoin. Stop is not: the
+     * host ends whatever is running, whoever started it. When that was another device the host
+     * refuses with 599 and says so in words, and QuitSegue is what shows that message. The
+     * client cannot work around it and must not pretend otherwise.
+     */
+    function stopRunning(h) {
+        if (!h || !h.online || !h.paired) return
+
+        var running = computerModel.runningAppFor(h.index)
+        if (!running || running.name === undefined || running.name === "") {
+            // The same race Resume guards against: the session ended between the card being
+            // drawn and the press. There is nothing to stop, so ask nothing — the card redraws
+            // from the host's next status and the Stop goes away with it.
+            return
+        }
+
+        stopRunningDialog.appName   = running.name
+        stopRunningDialog.boxArt    = running.cover !== undefined ? running.cover : ""
+        stopRunningDialog.hostIndex = h.index
+        stopRunningDialog.hostName  = h.name
+        stopRunningDialog.open()
     }
 
     // The segue both card buttons push. One copy, because the callback below is the part that
@@ -1975,6 +2010,10 @@ FocusScope {
             resumeRunning(h)
             break
 
+        case "stop":
+            stopRunning(h)
+            break
+
         case "pair":
             var pin = computerModel.generatePinString()
             computerModel.pairComputer(h.index, pin)
@@ -2210,6 +2249,51 @@ FocusScope {
         standardButtons: Dialog.Yes | Dialog.No
         onAccepted: computerModel.deleteComputer(pcIndex)
         onClosed: navRoot.forceActiveFocus()
+    }
+
+    /*
+     * The card's Stop asks first, and the question is the app's own (28/09/2026).
+     *
+     * ⚠️ There is no path here that stops a session without this confirmation. Ending somebody
+     * else's stream by mis-click is not a mistake a second click cannot fix — but it is one a
+     * single click can make, and the host page has asked exactly this question since it grew a
+     * Stop. Same words, same flow, so the two Stops cannot teach different lessons.
+     */
+    NavigableMessageDialog {
+        id: stopRunningDialog
+        property string appName: ""
+        property url    boxArt: ""
+        property int    hostIndex: -1
+        property string hostName: ""
+        headerText: qsTr("STOP STREAM")
+        affirmativeIsDanger: true
+        text: qsTr("Are you sure you want to stop %1? Any unsaved progress will be lost.").arg(appName)
+        standardButtons: Dialog.Yes | Dialog.No
+        onAccepted: stopIt()
+        onClosed: navRoot.forceActiveFocus()
+
+        function stopIt() {
+            var component = Qt.createComponent("QuitSegue.qml")
+            if (component.status !== Component.Ready) {
+                console.warn("[stop] QuitSegue.qml not ready:", component.errorString())
+                return
+            }
+
+            stackView.push(component.createObject(stackView, {
+                "appName": appName,
+                "boxArt":  boxArt,
+                // The one call that actually ends it, same as the host page's X.
+                "quitRunningAppFn": function() { computerModel.stopRunningApp(hostIndex) },
+                // QuitSegue's own note explains why this matters: every deliberate stop funnels
+                // through there so the host can be told "finished" rather than being left to
+                // read the disconnect as a pause.
+                "onQuitSucceededFn": function() {
+                    if (appShell) appShell.noteStreamEnded(hostIndex, hostName)
+                },
+                "nextAppName": null,
+                "nextSession": null
+            }))
+        }
     }
 
     NavigableMessageDialog {

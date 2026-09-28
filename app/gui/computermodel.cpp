@@ -1411,6 +1411,28 @@ QVariantMap ComputerModel::runningAppFor(int computerIndex) const
     return out;
 }
 
+/*
+ * End the app running on this host, from the Home card.
+ *
+ * The same call the host page's Stop makes — ComputerManager::quitRunningApp() — exposed here
+ * because the card addresses a host by index, exactly as runningAppFor() above it does. It
+ * travels over the host's own HTTP API (NvHTTP /cancel), NOT the StreamTweak bridge, so it
+ * needs no bridge allowance and works on a host that has never heard of us — which is the
+ * point: this is the one thing on the card that can end a session nobody here started.
+ *
+ * ⚠️ A host answers 599 when the session was started by a DIFFERENT device, and says so in
+ * words ("you must quit the game on the host PC manually or use the device that originally
+ * started the game"). That is the host's rule and not ours to work around; the failure comes
+ * back as ComputerManager::quitAppCompleted(error) and QuitSegue is what shows it.
+ */
+void ComputerModel::stopRunningApp(int computerIndex)
+{
+    if (computerIndex < 0 || computerIndex >= m_Computers.count())
+        return;
+
+    m_ComputerManager->quitRunningApp(m_Computers[computerIndex]);
+}
+
 QString ComputerModel::formatAgo(const QDateTime& utcStamp)
 {
     if (!utcStamp.isValid())

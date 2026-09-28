@@ -8,10 +8,11 @@ https://github.com/onaiaku/ArtMoon
 **Version 1.5.0 (28/09/2026)**
 --------------------------------------
 
-The last session is back on the home card, and the AppImage in this release is the one that starts on older systems.
+The last session is back on the home card, the card can stop a stream as well as start one, and the AppImage in this release is the one that starts on older systems.
 
-**New — 1**
+**New — 2**
 - Home shows how the last session on that host went, under the host's link speed: when it ran, how long for, the grade the host gave it, and the RTT, host latency and drop rate it measured. The RTT caption carries the session's peak beside the average. This was on the card before the home screen was redesigned and it is back by request, so it describes the last session on the host — which may have been another device's. Anything the host never measured is drawn as a dash rather than a zero it did not report.
+- Stop a stream from the home card. When a session is running on that host, the card now offers Stop under Resume — so a stream can be ended from here and not only started or rejoined. It asks before it does it. A session the host says was started by another device cannot be stopped this way; the host refuses it and its message explains that.
 
 **Fixed — 2**
 - The AppImage now starts on older systems. It had been built on a base new enough that it needed a newer C library than Ubuntu 22.04 and Debian 12 ship, so on those machines it would not start at all. It is now built against the oldest still-supported Ubuntu release, so it runs there and on everything newer — which is what a portable build is for.

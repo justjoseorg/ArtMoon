@@ -391,9 +391,10 @@ Item {
         var list = []
 
         // (Play again / Resume is NOT in here. It is drawn under the cover on the other side of
-        //  the card — see panelActionBtn — because a verb down here had the game it refers to a
-        //  card's width away, and read as generic. It is still one stop past the last button
-        //  in this row: _panelActionReachable and moveAction below.)
+        //  the card — see panelActionStack and PanelButton — because a verb down here had the
+        //  game it refers to a card's width away, and read as generic. It is still one stop past
+        //  the last button in this row, and Stop is the stop after that: _panelActionReachable,
+        //  _stopReachable and moveAction below.)
 
         if (statusUnknown)
             list.push({ kind: "open", label: qsTr("Open"), danger: false, disabled: true })
@@ -417,10 +418,25 @@ Item {
     // a zone of its own is what lets Right walk into it and Left walk back out with no new key
     // handling: it sits to the right of the buttons, which is what Right already means here.
     readonly property bool _panelActionReachable: _hasPanel
-    readonly property int _maxActionIndex: actions.length - (_panelActionReachable ? 0 : 1)
+    readonly property int _maxActionIndex:
+        _panelActionReachable ? actions.length + (_stopReachable ? 1 : 0)
+                              : actions.length - 1
 
     // What that button does, decided once so the pad, the mouse and the label cannot disagree.
     readonly property string _panelActionKind: _hasRunning ? "resume" : "continue"
+
+    /*
+     * Stop, one stop past Resume (28 September 2026, by request).
+     *
+     * Only while something is actually streaming: the pair is Resume-over-Stop, so a card with
+     * no session on the host has nothing to stop and draws one button, exactly as before.
+     *
+     * ⚠️ It rides on `_panelActionEnabled` — the same gate Resume has — because the two are one
+     * control set. A stop that fired while the link was still renegotiating is the failure this
+     * whole feature exists to avoid, and it would be worse here than for a launch: this one ends
+     * something.
+     */
+    readonly property bool _stopReachable: _panelActionReachable && _hasRunning
 
     /*
      * Shown-and-greyed rather than taken away, which is what the rest of the card does: an
@@ -468,6 +484,13 @@ Item {
         if (_panelActionReachable && actionIndex === actions.length) {
             if (!_panelActionEnabled) return
             stage.activated(_panelActionKind)
+            return
+        }
+
+        // Stop, one past that. Same gate as the button above it — see _stopReachable.
+        if (_stopReachable && actionIndex === actions.length + 1) {
+            if (!_panelActionEnabled) return
+            stage.activated("stop")
             return
         }
         if (actionIndex < 0 || actionIndex >= actions.length) return
@@ -1611,14 +1634,19 @@ Item {
         width: stage._px(380)
 
         /*
-         * ⚠️ It ends where the Play again button begins, and that button is pinned to the
-         * action row on the other side of the card. So this is not centred in the card and
-         * must not be: the two sides of the bottom edge line up because BOTH are measured
-         * from the same row, and centring this block would put its button a few pixels off
-         * from the ones beside it — which is exactly the kind of near-alignment the eye
-         * reads as a mistake rather than as a choice.
-         */
-        availableHeight: panelActionBtn.y - y - stage._px(16)
+        * ⚠️ It ends where the Play again button begins, and that button is pinned to the
+        * action row on the other side of the card. So this is not centred in the card and
+        * must not be: the two sides of the bottom edge line up because BOTH are measured
+        * from the same row, and centring this block would put its button a few pixels off
+        * from the ones beside it — which is exactly the kind of near-alignment the eye
+        * reads as a mistake rather than as a choice.
+        *
+        * Measured from the TOP of the stack (28/09/2026), not from the button: when a
+        * Stop is drawn under Resume the pair stands 68 px taller, and the block above is
+        * what gives that room up. Measuring from the button would have left the cover
+        * drawing straight through the new button.
+        */
+        availableHeight: panelActionStack.y - y - stage._px(16)
 
         // "Streaming now" in the words and with the live dot of the host page's STREAMING
         // tag: the badge is where this block says WHY it shows this game, and a session
@@ -1665,11 +1693,14 @@ Item {
         sessions: 0
     }
 
-    /*
-     * ── Play again / Resume ──────────────────────────────────────────────
+/*
+     * ── Resume / Play again, and Stop ────────────────────────────────────────────────────
      *
      * Resume while the host is streaming (6.0.0), the same word the host page puts on
-     * the running game; Play again otherwise.
+     * the running game; Play again otherwise. Stop is the second half of that pair and is
+     * drawn UNDER Resume, only while something is streaming (28/09/2026, by request): the
+     * block says which session is up, and these two are everything that can be done about it
+     * from here — rejoin it, or end it.
      *
      * Same body as the buttons in the action row and on the same baseline as them, so the
      * card has one row of controls that happens to span both halves rather than two rows
@@ -1680,30 +1711,41 @@ Item {
      * to a card's width away. Under the cover and the title, "Play again" has already been
      * told what it plays.
      *
-     * The pad reaches it as one stop past the last button — geometrically it is to the
-     * right of them, which is what Right already means here. That was true of the cover
+     * The pad reaches them as the stops past the last button — geometrically the pair is to
+     * the right of them, which is what Right already means here. That was true of the cover
      * too, and the cover was still the wrong target: a picture does not look like a
      * control. A button does.
      */
-    Rectangle {
-        id: panelActionBtn
-        // The same condition the focus chain uses, read from one place: written out twice
-        // it would eventually be true for the pad and false for the eye.
-        visible: stage._panelActionReachable
 
-        anchors.horizontalCenter: lastPanel.horizontalCenter
-        // On the line of the action row, as before. It can no longer ANCHOR there: since 6.0.0
-        // the row is inside the card and this button is not, and QML only anchors to a parent
-        // or a sibling. The card starts at the stage's top, so the row's own y is the stage's.
-        y: card.y + actionRow.y + (actionRow.height - height) / 2
+    /*
+     * The pair's one control, used twice. Resume/Play again and Stop differ in their word,
+     * their colour and what they fire — everything else about them (height, radius, baseline,
+     * the pad prompt badge, the focus and hover treatment) is identical, and a second
+     * hand-rolled copy is how those two would drift apart on the first tweak. Declared at the
+     * top level rather than inside the stack below, so nothing reads it as a laid-out child.
+     */
+    component PanelButton: Rectangle {
+        id: panelBtn
+
+        property string label: ""
+        // Stop is drawn in the app's danger colour, not a second red mixed here.
+        property bool   danger: false
+        // The action name the card is handed when this fires.
+        property string kind: ""
+        // How far past the action row's last button this one sits in the card's action walk:
+        // 0 is Resume/Play again, 1 is Stop. Keeping both on the one index line rather than
+        // making Stop a zone of its own is what lets the pad walk in and back out again with
+        // no new key handling.
+        property int stopOffset: 0
 
         readonly property bool _focused:
-            stage.zoneActive && stage.actionIndex === stage.actions.length && !stage.pointerMode
-        readonly property bool _hovered: panelActionMouse.containsMouse && stage.pointerMode
+            stage.zoneActive && stage.actionIndex === stage.actions.length + stopOffset
+                           && !stage.pointerMode
+        readonly property bool _hovered: panelBtnMouse.containsMouse && stage.pointerMode
         readonly property bool _lit: _focused || _hovered
 
         height: stage._px(58)
-        width: panelActionRow.implicitWidth + stage._px(54)
+        width: panelBtnRow.implicitWidth + stage._px(54)
         radius: stage._px(10)
 
         // The same pair the action row carries, on the same terms and with the same
@@ -1717,9 +1759,9 @@ Item {
             NumberAnimation { duration: 160 }
         }
 
-        color: _lit ? Theme.accent : "#14ffffff"
+        color: _lit ? (panelBtn.danger ? Theme.danger : Theme.accent) : "#14ffffff"
         border.width: _focused ? 2 : 1
-        border.color: _lit ? Theme.accent : Theme.lineHigh
+        border.color: _lit ? (panelBtn.danger ? Theme.danger : Theme.accent) : Theme.lineHigh
 
         Behavior on color {
             enabled: !Theme.reduceAnimations
@@ -1736,7 +1778,7 @@ Item {
         scale: _focused && !Theme.reduceAnimations ? 1.04 : 1.0
 
         Row {
-            id: panelActionRow
+            id: panelBtnRow
             anchors.centerIn: parent
             spacing: stage._px(10)
 
@@ -1744,7 +1786,7 @@ Item {
             // on the focused button and nowhere else, because A activates what has the
             // focus and only that button can honestly claim it.
             Rectangle {
-                id: playBadge
+                id: panelBadge
                 readonly property bool   _padMode: InputHints.padActive
                 readonly property string _padSet: SdlGamepadKeyNavigation.controllerType
                 readonly property string _padLetter:
@@ -1752,23 +1794,25 @@ Item {
                   : _padSet === "switch" ? "B"
                   :                        "A"
                 readonly property string _letter:
-                    !panelActionBtn._focused ? "" : (_padMode ? _padLetter : qsTr("Enter"))
+                    !panelBtn._focused ? "" : (_padMode ? _padLetter : qsTr("Enter"))
 
                 anchors.verticalCenter: parent.verticalCenter
                 visible: _letter.length > 0
                 width: _padMode ? stage._px(26)
-                                : Math.max(stage._px(26), playBadgeText.implicitWidth + stage._px(14))
+                                : Math.max(stage._px(26), panelBadgeText.implicitWidth + stage._px(14))
                 height: stage._px(26)
                 radius: _padMode ? width / 2 : stage._px(7)
-                color: panelActionBtn._lit ? Theme.onAccent : "#26ffffff"
+                color: panelBtn._lit ? Theme.onAccent : "#26ffffff"
 
                 Text {
-                    id: playBadgeText
+                    id: panelBadgeText
                     anchors.centerIn: parent
-                    text: playBadge._letter
+                    text: panelBadge._letter
                     // Theme.text, not the card's reading colour (_onBg): this button stands on
                     // the app's floor now, not on the host's backdrop.
-                    color: panelActionBtn._lit ? Theme.accent : Theme.text
+                    color: panelBtn._lit
+                           ? (panelBtn.danger ? Theme.danger : Theme.accent)
+                           : Theme.text
                     font.family: Theme.family
                     font.pixelSize: stage._px(Theme.fontSmall)
                     font.weight: Font.Bold
@@ -1777,11 +1821,13 @@ Item {
 
             Text {
                 anchors.verticalCenter: parent.verticalCenter
-                text: stage._hasRunning ? qsTr("Resume") : qsTr("Play again")
-                color: panelActionBtn._lit ? Theme.onAccent : Theme.text
+                text: panelBtn.label
+                color: panelBtn._lit
+                       ? Theme.onAccent
+                       : (panelBtn.danger ? Theme.danger : Theme.text)
                 font.family: Theme.family
                 font.pixelSize: stage._px(Theme.fontTitle)
-                font.weight: panelActionBtn._lit ? Font.Bold : Font.Normal
+                font.weight: panelBtn._lit ? Font.Bold : Font.Normal
 
                 Behavior on color {
                     enabled: !Theme.reduceAnimations
@@ -1791,14 +1837,61 @@ Item {
         }
 
         MouseArea {
-            id: panelActionMouse
+            id: panelBtnMouse
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onClicked: {
-                stage.actionIndex = stage.actions.length
-                stage.activated(stage._panelActionKind)
+                stage.actionIndex = stage.actions.length + panelBtn.stopOffset
+                stage.activated(panelBtn.kind)
             }
+        }
+    }
+
+    /*
+     * The stack itself: Resume/Play again, and Stop under it while something is streaming.
+     *
+     * ⚠️ It grows UPWARD, and that is a layout constraint rather than a preference. The action
+     * row is anchored 30 px above the card's bottom, and the shell's 44 px status bar — the
+     * Power / Settings / Exit prompts — overlays everything below that. A second button grown
+     * downward would be drawn on top of those prompts. Growing up costs the block above 68 px
+     * instead: lastPanel.availableHeight is measured from the TOP of this stack for exactly
+     * that reason, so the cover and the title give the room up rather than the button leaving
+     * the card. With no session on the host nothing changes at all — the second term below is
+     * zero and this is the single-button expression it has always been.
+     */
+    Item {
+        id: panelActionStack
+
+        anchors.horizontalCenter: lastPanel.horizontalCenter
+
+        readonly property int _btnH: stage._px(58)
+        readonly property int _gap:  stage._px(10)
+
+        width: panelResumeBtn.width
+        height: _btnH + (stage._stopReachable ? _btnH + _gap : 0)
+        // The BOTTOM of the stack holds the action row's line, not the top — see above.
+        y: card.y + actionRow.y + (actionRow.height - _btnH) / 2 - (height - _btnH)
+
+        PanelButton {
+            id: panelResumeBtn
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: stage._stopReachable ? panelStopBtn.y - height - panelActionStack._gap
+                                    : parent.height - height
+            label: stage._hasRunning ? qsTr("Resume") : qsTr("Play again")
+            kind:  stage._panelActionKind
+            stopOffset: 0
+        }
+
+        PanelButton {
+            id: panelStopBtn
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: parent.height - height
+            visible: stage._stopReachable
+            label: qsTr("Stop")
+            kind:  "stop"
+            danger: true
+            stopOffset: 1
         }
     }
 

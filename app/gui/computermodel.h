@@ -319,6 +319,10 @@ public:
      */
     Q_INVOKABLE QVariantMap runningAppFor(int computerIndex) const;
 
+    // Ends the app running on this host. The host page's Stop and the card's Stop are the same
+    // operation; see the note on the definition for what the host does and does not allow.
+    Q_INVOKABLE void stopRunningApp(int computerIndex);
+
     /// "2 h ago", "yesterday", "3 days ago" — the wording the host used to send with its own
     /// last-session reply, kept identical now that the client works it out for itself.
     static QString formatAgo(const QDateTime& utcStamp);
