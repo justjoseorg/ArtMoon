@@ -1886,6 +1886,16 @@ FocusScope {
                                : qsTr("Ready")
         hideAddresses:     StreamingPreferences.hideHostIps
         lastPlayed:        (_h && _h.lastPlayed) ? _h.lastPlayed : ({})
+
+        // ⚠️ This line is the ONLY thing that feeds the last-session panel, and its absence is
+        // completely silent: stage.lastSession keeps its {} default, _hasLastSession stays
+        // false, the panel never draws, and nothing warns — the request goes out, the host
+        // answers with real numbers, and the card simply ignores them. 1.5.0 shipped exactly
+        // that, and it cost a day to find. record() putting lastSession in the map is NOT
+        // enough; the stage only ever sees what is named in this list. Anything added to
+        // record() for the stage must be named here too.
+        lastSession:       (_h && _h.lastSession) ? _h.lastSession : ({})
+
         runningApp:        (_h && _h.runningApp) ? _h.runningApp : ({})
 
         // The physical (LAN) address stays the headline even when we are reaching the host
