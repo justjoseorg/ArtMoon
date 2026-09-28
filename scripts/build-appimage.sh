@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 BUILD_CONFIG="release"
 
 fail()
