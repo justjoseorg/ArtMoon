@@ -5,6 +5,16 @@ ArtMoon - ChangeLog - Developed by onaiaku & Rias
 https://github.com/onaiaku/ArtMoon
 
 --------------------------------------
+**Version 1.4.1 (28/09/2026)**
+--------------------------------------
+
+A fix release for the Linux AppImage, plus one overlay heading that had drifted.
+
+**Fixed — 2**
+- The AppImage now starts on older systems. It had been built on a base new enough that it needed a newer C library than Ubuntu 22.04 and Debian 12 ship, so on those machines it would not start at all. It is now built against the oldest still-supported Ubuntu release, so it runs there and on everything newer — which is what a portable build is for.
+- The host metrics heading in the stream overlay did not match the same heading in Settings. The two are built in separate places and had drifted apart; they agree again.
+
+--------------------------------------
 **Version 1.4.0 (27/09/2026)**
 --------------------------------------
 
