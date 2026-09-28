@@ -9,9 +9,21 @@ This file covers behaviour.
 
 ## 1. Orientation & form factor
 
-- **Phones: portrait-locked.** `screenOrientation="portrait"` on PcView, AppView, Help,
-  AddComputerManually, StreamSettings, etc. Landscape layouts apply only on TV/large-screen
-  devices (Shield), which are natively landscape — no rotation handling needed.
+- **The app follows the device.** ArtMoon imposes no orientation of its own: rotate the phone and
+  the app rotates with it, honouring the system's auto-rotate setting — and when auto-rotate is
+  off, the system's own rotate button appears, because nothing is pinning the activity any more.
+  `OrientationHelper.applyOrientation()` runs from every ArtMoon activity's `onCreate` **and**
+  `onConfigurationChanged`, and always clears any orientation lock.
+  *Changed 2026-09-28: phones used to be portrait-locked, which phone users read as a bug —
+  the app "wouldn't rotate and not even the rotate button appeared" (issue #5).*
+- **Landscape layouts** exist for the hosts screen, the app picker and the app grid
+  (`res/layout-land/activity_pc_view.xml`, `activity_app_view.xml`, `app_grid_view.xml`,
+  `app_grid_view_small.xml`). `PcView.onConfigurationChanged` re-inflates through
+  `initializeViews()` and `AppView` re-replaces its grid fragment, so those are picked up on a
+  turn or a fold. Settings, Add host, Help and ArtLight have no landscape layout yet: they rotate,
+  and the portrait layout re-lays itself out in the wider window.
+- **Streaming keeps its own policy.** `Game` requests landscape — or the orientation that matches
+  a native-resolution stream — because a stream is not a rotatable screen.
 - TV-banner / leanback metadata: reuse upstream's existing declarations.
 
 ## 2. Hosts screen (hero card)

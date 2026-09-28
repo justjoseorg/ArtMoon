@@ -26,7 +26,7 @@ public class ArtLightActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        io.github.onaiaku.artmoon.OrientationHelper.lockPortraitOnPhones(this);
+        io.github.onaiaku.artmoon.OrientationHelper.applyOrientation(this);
         UiHelper.setLocale(this);
         setContentView(R.layout.activity_artlight);
 

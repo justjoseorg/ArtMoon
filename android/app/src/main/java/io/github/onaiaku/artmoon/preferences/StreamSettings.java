@@ -60,7 +60,7 @@ public class StreamSettings extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        OrientationHelper.lockPortraitOnPhones(this);
+        OrientationHelper.applyOrientation(this);
 
         previousPrefs = PreferenceConfiguration.readPreferences(this);
 

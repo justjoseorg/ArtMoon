@@ -111,8 +111,9 @@ public class PcView extends io.github.onaiaku.artmoon.ArtMoonActivity implements
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
 
-        // Foldables: re-evaluate the orientation policy on every screen
-        // change (cover -> inner releases the portrait lock).
+        // Re-assert the no-opinion orientation on every screen change, so a
+        // lock left by an older build (or a cover screen) is released and the
+        // app keeps following the device.
         OrientationHelper.applyOrientation(this);
 
         // Only reinitialize views if completeOnCreate() was called
@@ -260,7 +261,7 @@ public class PcView extends io.github.onaiaku.artmoon.ArtMoonActivity implements
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        OrientationHelper.lockPortraitOnPhones(this);
+        OrientationHelper.applyOrientation(this);
 
         // Assume we're in the foreground when created to avoid a race
         // between binding to CMS and onResume()
