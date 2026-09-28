@@ -5,6 +5,17 @@ ArtMoon - ChangeLog - Developed by onaiaku & Rias
 https://github.com/onaiaku/ArtMoon
 
 --------------------------------------
+**Version 1.5.1 (28/09/2026)**
+--------------------------------------
+
+The Android app follows the device now instead of holding portrait on phones.
+
+**Fixed — 1**
+
+**Android**
+- Phones were held in portrait, so turning the device sideways did nothing and the system's own rotate button never appeared. The app now follows the device on every screen, and the wide layouts that until now had only ever been used on TVs and large screens are used on phones as well. Foldables pick the right layout for whichever screen they are on as they open and close.
+
+--------------------------------------
 **Version 1.5.0 (28/09/2026)**
 --------------------------------------
 
