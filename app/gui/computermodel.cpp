@@ -478,9 +478,16 @@ void ComputerModel::requestHostLastSession(int computerIndex)
                     out[QStringLiteral("hasGrade")]   = o.value(QStringLiteral("has_grade")).toBool();
                     out[QStringLiteral("grade")]      = o.value(QStringLiteral("grade")).toString();
                     out[QStringLiteral("gradeColor")] = o.value(QStringLiteral("grade_color")).toString();
-                    out[QStringLiteral("rttMs")]      = o.value(QStringLiteral("rtt_ms")).toInt(-1);
-                    out[QStringLiteral("rttPeakMs")]  = o.value(QStringLiteral("rtt_peak_ms")).toInt(-1);
-                    out[QStringLiteral("hostLatMs")]  = o.value(QStringLiteral("host_latency_ms")).toInt(-1);
+                    // ⚠️ toDouble, not toInt, for all three of these. The host reports its own
+                    // latency in fractional milliseconds (1.7 ms), and QJsonValue::toInt() returns
+                    // the DEFAULT for any non-integral number rather than truncating it — so a
+                    // perfectly good measurement arrived as -1 and the card drew a dash, which is
+                    // the one value the dash is reserved for ("the host never measured this").
+                    // QML's _num() already formats with the right decimals and still reads a
+                    // negative as a dash, so fractional values need no further handling.
+                    out[QStringLiteral("rttMs")]      = o.value(QStringLiteral("rtt_ms")).toDouble(-1.0);
+                    out[QStringLiteral("rttPeakMs")]  = o.value(QStringLiteral("rtt_peak_ms")).toDouble(-1.0);
+                    out[QStringLiteral("hostLatMs")]  = o.value(QStringLiteral("host_latency_ms")).toDouble(-1.0);
                     out[QStringLiteral("dropsPct")]   = o.value(QStringLiteral("drops_pct")).toDouble(-1.0);
                     // games_total and the credited-games cover strip are deliberately NOT read.
                     // The card shows the last session's numbers; that strip was the right-hand
