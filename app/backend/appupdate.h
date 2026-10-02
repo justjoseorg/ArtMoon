@@ -22,7 +22,11 @@ class QSaveFile;
  * What changed, and why:</p>
  *
  * <ul>
- * <li>Windows only. ArtMoon's Linux branch (a terminal running install.sh) is gone.</li>
+ * <li><b>The installer is chosen by platform, and so is the way it is applied.</b> Windows
+ *     gets ArtMoon_&lt;version&gt;_Installer.exe out of the release and runs it. Linux has no
+ *     installer to run, because the AppImage <i>is</i> the application: the update replaces
+ *     that file and opens it again, which cannot be done from inside the process doing the
+ *     replacing. See launchLinuxSwap().</li>
  * <li>The asset is matched by pattern, not by a literal name: ours carries the version
  *     (ArtMoon_1.4.0_Installer.exe, OutputBaseFilename in ArtMoon.iss), and the version in
  *     the name must be the tag's own.</li>
@@ -150,6 +154,23 @@ private:
     static QString installedVersion();
     static QString downloadDir();
     static void clearDownloads();
+
+    /**
+     * The AppImage this process is running from, or empty when there is not one — a
+     * source build, or a copy unpacked with --appimage-extract. Empty means self-update
+     * is impossible here and the user is told so rather than offered a button that
+     * cannot work, which is the whole shape of the Windows-only message this replaced.
+     */
+    static QString appImagePath();
+
+#ifndef Q_OS_WIN32
+    /**
+     * Linux's half of launchInstaller(): write the swap helper, start it detached, quit.
+     * It has to be a separate process — the file being replaced is the one running, and
+     * anything this process starts after quitting would not survive it.
+     */
+    void launchLinuxSwap();
+#endif
 
     // Holding a download, finished or not: the release and the file must stay as they are.
     bool holdsDownload() const { return m_State == Downloading || m_State == Ready || m_State == Launching; }

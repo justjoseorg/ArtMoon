@@ -5,6 +5,22 @@ ArtMoon - ChangeLog - Developed by onaiaku & Rias
 https://github.com/onaiaku/ArtMoon
 
 --------------------------------------
+**Version 1.6.0 (02/10/2026)**
+--------------------------------------
+
+The app can update itself on Linux now, and the second Update button on the brand tab is gone.
+
+**New — 1**
+
+**Linux**
+- The app updates itself on Linux. Pressing Update now used to answer that updating from the app was Windows only, and on Linux it could not even find the right file to download, because it went looking for the Windows installer. It now looks for the AppImage on every platform, replaces the copy it is running from, and opens it again. If the AppImage is somewhere you own, no password is asked for at all; if it is in a system folder it asks for your password. If you dismiss that prompt, or the copy fails, nothing is changed: the old copy is left exactly where it was and still opens, so you cannot be left without the app. The copy it replaced is kept next to it as a fallback.
+
+**Fixed — 1**
+
+**Interface**
+- The brand tab had an Update now button of its own, left over from when that tab was the only place a stale build showed up. It opened the same updater the About tab opens, so having two was one too many, and the About tab's is the one that remains. The version readout and the changelog link on that tab are untouched.
+
+--------------------------------------
 **Version 1.5.1 (28/09/2026)**
 --------------------------------------
 

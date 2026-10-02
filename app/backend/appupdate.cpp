@@ -6,6 +6,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -38,15 +39,40 @@ constexpr int StallTimeoutMs = 30000;
 constexpr int StallTickMs = 5000;
 constexpr int LateTickMs = 2 * StallTickMs;
 
-// OutputBaseFilename=ArtMoon_{#AppVersion}_Installer in ArtMoon.iss. Anchored at both
-// ends: a ".exe.sig" or a "_Installer_debug.exe" must not qualify.
-const QRegularExpression& installerPattern()
+// The release asset THIS platform updates with, anchored at both ends so a ".exe.sig"
+// or a "_Installer_debug.exe" cannot qualify. Both names carry the version and it has
+// to be the tag's own, so an old file left attached to a newer release is not mistaken
+// for it.
+//
+// The pattern is per-platform rather than "the installer": a Windows build and a Linux
+// build do not share an update mechanism, and matching the .exe from Linux is exactly
+// how this used to offer an update it then refused to perform.
+#ifdef Q_OS_WIN32
+// OutputBaseFilename=ArtMoon_{#AppVersion}_Installer in ArtMoon.iss.
+const QRegularExpression& assetPattern()
 {
     static const QRegularExpression re(
         QStringLiteral("^ArtMoon_(\\d+(?:\\.\\d+){1,3})_Installer\\.exe$"),
         QRegularExpression::CaseInsensitiveOption);
     return re;
 }
+#else
+// The CI AppImage — the glob actions/upload-artifact is given in build-linux.yml.
+const QRegularExpression& assetPattern()
+{
+    static const QRegularExpression re(
+        QStringLiteral("^ArtMoon-(\\d+(?:\\.\\d+){1,3})-x86_64\\.AppImage$"),
+        QRegularExpression::CaseInsensitiveOption);
+    return re;
+}
+
+// A program we could run by name, looked up the way a shell would rather than trusted
+// to PATH order.
+bool haveProgram(const QString& name)
+{
+    return !QStandardPaths::findExecutable(name).isEmpty();
+}
+#endif
 
 // SHA-256 of a file on disk, lower-case hex; empty if it cannot be read.
 QByteArray fileSha256(const QString& path)
@@ -151,6 +177,19 @@ void AppUpdate::clearDownloads()
     // Best effort. The installer of the update that just ran can still be open for the few
     // seconds Setup takes to exit after relaunching us; whatever is locked now goes next time.
     QDir(downloadDir()).removeRecursively();
+}
+
+QString AppUpdate::appImagePath()
+{
+#ifdef Q_OS_WIN32
+    return {};
+#else
+    // The AppImage runtime exports APPIMAGE with the absolute path of the file it is
+    // running. It is the only trustworthy answer to "which file do I replace": the
+    // process's own /proc/self/exe points inside the mounted squashfs, at a path that
+    // does not exist outside the mount and carries no write permission.
+    return qEnvironmentVariable("APPIMAGE");
+#endif
 }
 
 bool AppUpdate::updateAvailable() const
@@ -293,7 +332,7 @@ void AppUpdate::handleArtMoon(QNetworkReply* reply)
     for (const QJsonValue& value : assets) {
         const QJsonObject asset = value.toObject();
         const QString name = asset.value(QStringLiteral("name")).toString();
-        const QRegularExpressionMatch match = installerPattern().match(name);
+        const QRegularExpressionMatch match = assetPattern().match(name);
         if (!match.hasMatch() || parseVersion(match.captured(1)) != tagVersion) {
             continue;
         }
@@ -358,9 +397,29 @@ void AppUpdate::updateNow()
 void AppUpdate::startDownload()
 {
 #ifndef Q_OS_WIN32
-    fail(tr("Updating from the app is Windows only"));
-    return;
-#else
+    // Linux. Both of these are checked BEFORE the download rather than after it: a user who
+    // is about to be asked for a password, or who is going to be told there is no way to
+    // write the file at all, should hear it before 80 MB arrive.
+    //
+    // Self-update replaces the AppImage we are running from, so there has to be one. A
+    // source build, or a copy unpacked with --appimage-extract, has no file to replace and
+    // no honest way to update itself — say that, instead of the Windows-only message this
+    // used to give, which was true of the platform and useless about the situation.
+    const QString appImage = appImagePath();
+    if (appImage.isEmpty()) {
+        fail(tr("This is not an AppImage copy of ArtMoon, so it cannot update itself"));
+        return;
+    }
+    // install.sh puts it in /usr/local/bin, which is root's; a copy the user downloaded
+    // themselves is not. Only the first case needs pkexec, and only the first case can
+    // fail for want of it.
+    const QString appImageDir = QFileInfo(appImage).absolutePath();
+    if (!QFileInfo(appImageDir).isWritable() && !haveProgram(QStringLiteral("pkexec"))) {
+        fail(tr("Cannot write %1 and pkexec is not installed").arg(appImageDir));
+        return;
+    }
+#endif
+
     if (!updateAvailable()) {
         fail(tr("No newer version to install"));
         return;
@@ -417,7 +476,6 @@ void AppUpdate::startDownload()
     m_SinceData.start();
     m_SinceTick.start();
     m_StallWatch.start();
-#endif
 }
 
 void AppUpdate::checkStall()
@@ -532,6 +590,7 @@ void AppUpdate::launchInstaller()
         return;
     }
 
+#ifdef Q_OS_WIN32
     // No switches: the wizard runs visibly, so the user sees every step, and its last page
     // carries "Launch StreamLight", which is what reopens the app — see "The installer runs
     // visibly" in the header. Setup.e64 is asInvoker and elevates itself, so this starts
@@ -545,4 +604,153 @@ void AppUpdate::launchInstaller()
     setState(Launching);
     // The installer cannot replace StreamLight.exe while this process holds it.
     QCoreApplication::quit();
+#else
+    // There is no installer to run on Linux: the AppImage IS the application.
+    launchLinuxSwap();
+#endif
 }
+
+#ifndef Q_OS_WIN32
+
+// ── Linux: replacing the AppImage that is currently running ────────────────────────────
+//
+// This cannot be done in-process, and the reason is worth stating because the obvious
+// version of it does not work. The file to replace is the file we are running; after the
+// swap the app has to start again — and ArtMoon has a single-instance guard, so a launch
+// while the old process is still up only raises it and exits. So the order has to be
+// quit, then replace, then launch, and every one of those steps after the first has to be
+// taken by something that outlives this process.
+//
+// Hence the two scripts below. They are written from code rather than shipped as files,
+// so the script and the build that wrote it can never be a version apart.
+
+// The half that waits. Runs as the user, which is what makes the relaunch at the end
+// correct for free: it inherits this process's environment, so the new copy comes up on
+// the same display and session bus the old one was using. A root process relaunching a
+// desktop app has to reconstruct all of that and gets it wrong on some sessions.
+const char* const SwapHelperScript = R"SH(#!/bin/sh
+# ArtMoon self-update. Written by the running app at update time.
+#   $1 pid     the app that wrote this; the swap waits for it to exit
+#   $2 new     the verified AppImage, just downloaded
+#   $3 target  the AppImage in use, which is the file that gets replaced
+#   $4 work    this script's own directory
+set -u
+
+pid="$1"; new="$2"; target="$3"; work="$4"
+dir="$(dirname "$target")"
+
+# 1. Wait for ArtMoon to go. Its quit was asked for, so this waits rather than kills.
+#    0.2s up to fifteen minutes: long enough for an unhurried exit, bounded so that a
+#    wedged process cannot hold the update open forever.
+i=0
+while [ "$i" -lt 4500 ]; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.2
+    i=$((i + 1))
+done
+
+# 2. Replace it. A copy in a directory the user owns needs no privilege at all; install.sh
+#    puts it in /usr/local/bin, which is root's, and there pkexec is what asks for the
+#    password. Either way the move itself is the same script, so the two paths cannot
+#    drift apart. Failures are swallowed on purpose: step 3 has to run regardless.
+if [ -w "$dir" ]; then
+    sh "$work/artmoon-swap.sh" "$new" "$target" || true
+else
+    pkexec /bin/sh "$work/artmoon-swap.sh" "$new" "$target" || true
+fi
+
+# 3. Open ArtMoon again either way — and this is the point of swallowing the failure
+#    above. A password prompt that gets dismissed, or a copy that fails, must not leave
+#    the user with no app at all: in both cases the old build is still sitting there
+#    untouched, and it opens exactly as it was. setsid puts the new process in its own
+#    session so this script's exit cannot take it down with it.
+if command -v setsid >/dev/null 2>&1; then
+    setsid "$target" </dev/null >/dev/null 2>&1 &
+else
+    "$target" </dev/null >/dev/null 2>&1 &
+fi
+)SH";
+
+// The move itself. Staged into the target's own directory and then renamed over it: a
+// rename inside one filesystem is atomic, so nothing can ever observe a half-written
+// ArtMoon — which is exactly what copying straight onto the target would produce, both
+// for a running instance and for a desktop entry clicked mid-copy.
+const char* const SwapMoveScript = R"SH(#!/bin/sh
+# ArtMoon self-update: replace one AppImage with another. $1 new, $2 target.
+set -u
+
+new="$1"; target="$2"
+dir="$(dirname "$target")"
+
+[ -f "$new" ] || exit 1
+
+staged="$dir/.artmoon-staged.$$"
+cp -f "$new" "$staged" || { rm -f "$staged"; exit 1; }
+chmod 755 "$staged" 2>/dev/null || true
+
+# Keep whoever owned the old file. install.sh's copy is the user's; anything installed by
+# the hand-over is not. Replacing it as root would otherwise leave it root-owned and the
+# next update needing a password it did not need before.
+owner="$(stat -c '%u:%g' "$target" 2>/dev/null)"
+if [ -n "$owner" ]; then
+    chown "$owner" "$staged" 2>/dev/null || true
+fi
+
+# One previous build is kept, overwritten each time. Without it a bad download costs a
+# fresh download; with it, the file is right there.
+mv -f "$target" "$target.previous" 2>/dev/null || true
+mv -f "$staged" "$target" || { rm -f "$staged"; exit 1; }
+rm -f "$new" 2>/dev/null || true
+exit 0
+)SH";
+
+void AppUpdate::launchLinuxSwap()
+{
+    const QString target = appImagePath();
+    if (target.isEmpty()) {
+        fail(tr("This is not an AppImage copy of ArtMoon, so it cannot update itself"));
+        return;
+    }
+
+    // A directory of our own inside the download folder, 0700. This process writes the
+    // scripts and then runs one of them, and the temp directory is shared with every other
+    // user on the machine — the mode is what keeps a script from being swapped between the
+    // write and the exec.
+    const QString work = QDir(downloadDir()).filePath(QStringLiteral("swap"));
+    QDir().mkpath(work);
+    QFile::setPermissions(work, QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                               | QFileDevice::ExeOwner);
+
+    const auto writeScript = [&work](const QString& name, const char* body) {
+        QFile file(QDir(work).filePath(name));
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            return false;
+        }
+        const QByteArray bytes(body);
+        return file.write(bytes) == bytes.size();
+    };
+
+    if (!writeScript(QStringLiteral("artmoon-swap.sh"), SwapMoveScript)
+            || !writeScript(QStringLiteral("artmoon-update.sh"), SwapHelperScript)) {
+        fail(tr("Could not write the updater"));
+        return;
+    }
+
+    // Detached, and started through /bin/sh rather than by the script's own path: this
+    // process quits in the next breath, and the helper is the thing that has to outlive it.
+    if (!QProcess::startDetached(QStringLiteral("/bin/sh"),
+                                 {QDir(work).filePath(QStringLiteral("artmoon-update.sh")),
+                                  QString::number(QCoreApplication::applicationPid()),
+                                  m_InstallerPath, target, work})) {
+        fail(tr("Could not start the updater"));
+        return;
+    }
+
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "AppUpdate: update helper started, quitting to let it replace %s",
+                qPrintable(target));
+    setState(Launching);
+    QCoreApplication::quit();
+}
+
+#endif  // !Q_OS_WIN32
