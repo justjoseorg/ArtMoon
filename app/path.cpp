@@ -96,10 +96,20 @@ QString Path::getDataFilePath(QString fileName)
         return candidatePath;
     }
 
-    // Return the QRC embedded copy
+    // Fall back to the QRC embedded copy. Check that it is really there: this used
+    // to announce "Found" without looking, so a file left out of resources.qrc
+    // reported itself present and then handed the caller an empty byte array. The
+    // only clue was an unrelated-looking failure further downstream - a missing
+    // shader surfaced as ID3D11Device::CreatePixelShader() returning E_INVALIDARG.
     candidatePath = ":/data/" + fileName;
-    qInfo() << "Found" << fileName << "at" << candidatePath;
-    return QString(candidatePath);
+    if (QFile::exists(candidatePath)) {
+        qInfo() << "Found" << fileName << "at" << candidatePath;
+        return candidatePath;
+    }
+
+    qWarning() << "Unable to find" << fileName
+               << "in the cache, current directory, data directories, application directory, or embedded resources";
+    return {};
 }
 
 void Path::initialize(bool portable)

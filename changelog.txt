@@ -8,13 +8,17 @@ https://github.com/onaiaku/ArtMoon
 **Version 1.7.2 (02/10/2026)**
 --------------------------------------
 
-Software decoding now means what it says when PyroWave is the codec you have selected.
+PyroWave works on Windows now.
 
-**Fixed — 2**
+**Fixed — 3**
 
 **Streaming**
-- **Windows:** choosing Force software decoding while PyroWave is selected no longer leaves the stream running on the graphics card. PyroWave decodes on the GPU and has no software decoder, so those two settings cannot both be honoured — the app used to note the contradiction in a log line and then build the GPU path anyway, so the setting looked like it had simply been ignored, and on a PC whose graphics card cannot decode PyroWave the stream failed rather than falling back. It now says so plainly and uses H.264, which does decode in software, exactly as it already did for a host that does not support PyroWave.
+- **Windows:** PyroWave can now actually be selected and used. It needs the GPU renderer, and that renderer was failing to start on every Windows machine with an invalid-argument error, after which the app quietly fell back to the other renderer for the rest of the session. PyroWave is the one codec with no second path on Windows, so it was the only thing that could not survive that fallback, and the app blamed your graphics driver for it. The driver was never at fault and neither was the card. If you tried PyroWave on Windows before now and concluded your GPU could not do it, please try it again.
+- **Windows:** choosing Force software decoding while PyroWave is selected no longer leaves the stream running on the graphics card. PyroWave decodes on the GPU and has no software decoder, so those two settings cannot both be honoured. The app used to note the contradiction in a log line and then build the GPU path anyway, so the setting looked as though it had simply been ignored. It now says so plainly and uses H.264, which does decode in software, exactly as it already did for a host that does not support PyroWave.
 - **Windows and Linux:** the codec check that runs as a stream starts now asks about the decoder you actually selected instead of always asking the hardware question. Auto and Force hardware decoding behave exactly as before; this is what lets Force software decoding reach the check at all.
+
+**Under the hood**
+- The log no longer announces that a data file was "Found" at its embedded location without checking. A file left out of the resource list reported itself present and then handed the caller nothing, so the only visible symptom was an unrelated-looking failure further down. It now says plainly when a file cannot be found.
 
 --------------------------------------
 **Version 1.7.1 (02/10/2026)**
