@@ -5,6 +5,17 @@ ArtMoon - ChangeLog - Developed by onaiaku & Rias
 https://github.com/onaiaku/ArtMoon
 
 --------------------------------------
+**Version 1.7.1 (02/10/2026)**
+--------------------------------------
+
+A crash fix for PyroWave on Linux.
+
+**Fixed — 1**
+
+**Streaming**
+- **Linux:** starting a stream with PyroWave selected no longer closes the app. The codec check that runs as a stream starts could tear the GPU decode surfaces down after the graphics device they belonged to had already been released, so the app exited the moment the stream was started. H.264, HEVC and AV1 were never affected on any platform, and PyroWave on Windows is unaffected.
+
+--------------------------------------
 **Version 1.7.0 (02/10/2026)**
 --------------------------------------
 

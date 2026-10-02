@@ -124,6 +124,15 @@ PlVkRenderer::~PlVkRenderer()
     // The render context must have been cleaned up by now
     SDL_assert(!m_HasPendingSwapchainFrame);
 
+#if defined(HAVE_PYROWAVE) && defined(Q_OS_LINUX)
+    // PyroWavePlaceboPool borrows m_Vulkan's GPU for its semaphores and its decode
+    // textures, so it has to be destroyed while that device is still alive. As a plain
+    // member it would be destroyed *after* this body runs - i.e. after the
+    // pl_vulkan_destroy() below has already freed the device - and would then tear down
+    // against freed memory, which crashes hard. Destroy it here, device still up.
+    m_PyroWavePool.reset();
+#endif
+
     if (m_Vulkan != nullptr) {
         for (int i = 0; i < (int)SDL_arraysize(m_Overlays); i++) {
             pl_tex_destroy(m_Vulkan->gpu, &m_Overlays[i].overlay.tex);
