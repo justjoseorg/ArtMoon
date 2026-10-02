@@ -15,6 +15,18 @@ public:
     Q_INVOKABLE static int
     getDefaultBitrate(int width, int height, int fps, bool yuv444);
 
+    // PyroWave needs roughly an order of magnitude more bandwidth than the
+    // other codecs; see docs/pyrowave-protocol.md.
+    Q_INVOKABLE static int
+    getDefaultPyroWaveBitrate(int width, int height, int fps, bool yuv444, bool hdr);
+
+    // The highest bitrate any control offers, in kbps (6.4.0): Nonary's 3000 Mbps for PyroWave,
+    // whose useful range starts where the other codecs' ends, and Moonlight's unlocked 500 for
+    // the rest — Unlock bitrate limit and its 150 Mbps are gone. ⚠️ The one place the ceiling
+    // lives: Settings, both override dialogs, the in-session panel and the command line ask here.
+    Q_INVOKABLE static int
+    getMaxBitrate(int videoCodecConfig);
+
     Q_INVOKABLE void save();
 
     /*
@@ -50,7 +62,8 @@ public:
         VCC_FORCE_H264,
         VCC_FORCE_HEVC,
         VCC_FORCE_HEVC_HDR_DEPRECATED, // Kept for backwards compatibility
-        VCC_FORCE_AV1
+        VCC_FORCE_AV1,
+        VCC_FORCE_PYROWAVE
     };
     Q_ENUM(VideoCodecConfig)
 
@@ -246,7 +259,6 @@ public:
     Q_PROPERTY(int customHeight MEMBER customHeight NOTIFY customResolutionChanged)
     Q_PROPERTY(int fps MEMBER fps NOTIFY displayModeChanged)
     Q_PROPERTY(int bitrateKbps MEMBER bitrateKbps NOTIFY bitrateChanged)
-    Q_PROPERTY(bool unlockBitrate MEMBER unlockBitrate NOTIFY unlockBitrateChanged)
     Q_PROPERTY(bool autoAdjustBitrate MEMBER autoAdjustBitrate NOTIFY autoAdjustBitrateChanged)
     Q_PROPERTY(bool enableVsync MEMBER enableVsync NOTIFY enableVsyncChanged)
     Q_PROPERTY(bool fractionalVsync MEMBER fractionalVsync NOTIFY fractionalVsyncChanged)
@@ -307,7 +319,6 @@ public:
     int customHeight;
     int fps;
     int bitrateKbps;
-    bool unlockBitrate;
     bool autoAdjustBitrate;
     bool enableVsync;
 
@@ -382,7 +393,6 @@ signals:
     void displayModeChanged();
     void customResolutionChanged();
     void bitrateChanged();
-    void unlockBitrateChanged();
     void autoAdjustBitrateChanged();
     void enableVsyncChanged();
     void fractionalVsyncChanged();

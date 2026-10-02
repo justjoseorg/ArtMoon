@@ -238,9 +238,10 @@ ApplicationWindow {
 
         // Display any modal dialogs for configuration warnings
         if (runConfigChecks) {
-            if (SystemProperties.isWow64) {
-                wow64Dialog.open()
-            }
+            // (The "wrong architecture" prompt that opened here on an ARM64 machine was removed
+            //  in 6.3.1. It told the user to download the ARM64 build and opened Moonlight's
+            //  release page: StreamLight publishes an x64 installer only, so the build it named
+            //  does not exist and the page it opened was another product's.)
 
             // Hardware acceleration and unmapped gamepads are checked asynchronously
             SystemProperties.hasHardwareAccelerationChanged.connect(hasHardwareAccelerationChanged)
@@ -398,22 +399,6 @@ ApplicationWindow {
         SdlGamepadKeyNavigation.notifyWindowFocus(visible && active)
     }
 
-    function navigateTo(url, objectType)
-    {
-        var existingItem = stackView.find(function(item, index) {
-            return item instanceof objectType
-        })
-
-        if (existingItem !== null) {
-            // Pop to the existing item
-            stackView.pop(existingItem)
-        }
-        else {
-            // Create a new item
-            stackView.push(url)
-        }
-    }
-
     // Keyboard shortcuts preserved from the old toolbar
     Shortcut {
         sequence: StandardKey.Preferences
@@ -453,16 +438,6 @@ ApplicationWindow {
                    "Try running with QT_QPA_PLATFORM=wayland or switch to X11.")
         helpText: qsTr("Open Help for more.")
         helpUrl: "https://github.com/moonlight-stream/moonlight-docs/wiki/Fixing-Hardware-Decoding-Problems"
-    }
-
-    NavigableMessageDialog {
-        id: wow64Dialog
-        headerText: qsTr("WRONG ARCHITECTURE")
-        standardButtons: Dialog.Ok | Dialog.Cancel
-        text: qsTr("This version of ArtMoon isn't optimized for this device. Please download the '%1' version of ArtMoon for the best streaming performance.").arg(SystemProperties.friendlyNativeArchName)
-        onAccepted: {
-            Qt.openUrlExternally("https://github.com/onaiaku/ArtMoon/releases");
-        }
     }
 
     ErrorMessageDialog {

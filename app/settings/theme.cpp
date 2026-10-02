@@ -82,13 +82,6 @@ QColor Theme::blend(const QColor& under, const QColor& over) const
                             under.blueF()  * (1 - a) + over.blueF()  * a);
 }
 
-QColor Theme::accentSoft() const
-{
-    QColor c = m_Accent;
-    c.setAlphaF(0.16f);   // float, not double: Qt 6 narrowed the QColor *F() API
-    return c;
-}
-
 QColor Theme::ground() const
 {
     // Near-black with a trace of the accent in it. This is the difference between an interface
@@ -146,11 +139,6 @@ void Theme::setStartupAnimation(bool on)
     m_StartupAnimation = on;
     save();
     emit changed();
-}
-
-void Theme::resetAccent()
-{
-    setAccent(DefaultAccent);
 }
 
 void Theme::save() const

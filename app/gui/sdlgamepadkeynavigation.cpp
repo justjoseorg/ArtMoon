@@ -60,11 +60,6 @@ SdlGamepadKeyNavigation::SdlGamepadKeyNavigation(StreamingPreferences* prefs)
     }
 }
 
-void SdlGamepadKeyNavigation::dbgLog(const QString& msg)
-{
-    slDbg("QML: " + msg);
-}
-
 void SdlGamepadKeyNavigation::simulateKey(int qtKey)
 {
     Qt::Key key = static_cast<Qt::Key>(qtKey);
