@@ -4864,9 +4864,14 @@ FocusScope {
                 // No section label above the first card: the tab is called StreamTweak and the
                 // card says StreamTweak in 22px directly beneath it. Every other tab's first
                 // label names something the tab title does not.
-                // ArtMoon self-update card. Lives in THIS tab because this is
-                // where the stale-version problem was spotted; the About tab
-                // stays licence/links only.
+                // The ArtMoon version strip: what this build is, set against what the
+                // latest release is. This tab no longer carries an update BUTTON — the
+                // one that used to sit here was ours, added when this was the only
+                // place a stale build was visible, and it went redundant the moment
+                // the updater landed on the About tab (which is where the startup
+                // prompt sends the user, and which owns the whole flow: download,
+                // verify, install). What is left here is the readout and the
+                // changelog link; see backend/appupdate.h.
                 Rectangle {
                     width: parent.width
                     color: settingsScreen._bg2
@@ -4921,19 +4926,6 @@ FocusScope {
                         anchors.verticalCenter: parent.verticalCenter
                         anchors.rightMargin: settingsScreen._px(16)
                         spacing: settingsScreen._px(10)
-                        // Update Now appears only when a newer release exists.
-                        MiniButton {
-                            id: stUpdateBtn
-                            // Match AboutLinkButton's fixed 170px width so the pair
-                            // reads as two buttons of the same standard size, not
-                            // one hugging its label next to one that doesn't.
-                            implicitWidth: stChangelogBtn.implicitWidth
-                            visible: settingsScreen.artMoonLatest.length > 0
-                                     && AppUpdate.compareVersions(SystemProperties.versionString,
-                                                                  settingsScreen.artMoonLatest) < 0
-                            label: qsTr("Update Now")
-                            onTriggered: AppUpdate.updateNow()
-                        }
                         AboutLinkButton {
                             id: stChangelogBtn
                             label: qsTr("Changelogs")
