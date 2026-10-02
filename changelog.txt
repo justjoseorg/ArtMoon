@@ -5,6 +5,18 @@ ArtMoon - ChangeLog - Developed by onaiaku & Rias
 https://github.com/onaiaku/ArtMoon
 
 --------------------------------------
+**Version 1.7.2 (02/10/2026)**
+--------------------------------------
+
+Software decoding now means what it says when PyroWave is the codec you have selected.
+
+**Fixed — 2**
+
+**Streaming**
+- **Windows:** choosing Force software decoding while PyroWave is selected no longer leaves the stream running on the graphics card. PyroWave decodes on the GPU and has no software decoder, so those two settings cannot both be honoured — the app used to note the contradiction in a log line and then build the GPU path anyway, so the setting looked like it had simply been ignored, and on a PC whose graphics card cannot decode PyroWave the stream failed rather than falling back. It now says so plainly and uses H.264, which does decode in software, exactly as it already did for a host that does not support PyroWave.
+- **Windows and Linux:** the codec check that runs as a stream starts now asks about the decoder you actually selected instead of always asking the hardware question. Auto and Force hardware decoding behave exactly as before; this is what lets Force software decoding reach the check at all.
+
+--------------------------------------
 **Version 1.7.1 (02/10/2026)**
 --------------------------------------
 

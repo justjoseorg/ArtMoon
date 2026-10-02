@@ -2442,10 +2442,16 @@ bool FFmpegVideoDecoder::tryInitializeNonHwAccelDecoder(PDECODER_PARAMETERS para
 bool FFmpegVideoDecoder::initializePyroWave(PDECODER_PARAMETERS params)
 {
 #ifdef HAVE_PYROWAVE
-    // PyroWave is a GPU codec with no software fallback
+    // PyroWave is a GPU codec and the library has no software decoder, so there is nothing
+    // to fall back to inside this function. Refuse rather than quietly overriding the
+    // preference: this used to log a warning and then build a D3D11 renderer anyway, so a PC
+    // with no GPU that can decode PyroWave failed *and* the user's setting looked honoured.
+    // Session::validateLaunch() drops PyroWave from the negotiated formats before this is
+    // reached when software decoding is forced, so this is the backstop, not the normal path.
     if (params->vds == StreamingPreferences::VDS_FORCE_SOFTWARE) {
-        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                    "PyroWave requires GPU decoding; ignoring the software decoding preference");
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "PyroWave has no software decoder; refusing to run it on the GPU while software decoding is forced");
+        return false;
     }
 
 #ifdef Q_OS_WIN32

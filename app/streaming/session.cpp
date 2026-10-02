@@ -1410,8 +1410,20 @@ bool Session::validateLaunch(SDL_Window* testWindow)
             emitLaunchWarning(tr("Your host PC doesn't support PyroWave. Using H.264 instead."));
             m_SupportedVideoFormats.removeByMask(VIDEO_FORMAT_MASK_PYROWAVE);
         }
+        else if (m_Preferences->videoDecoderSelection == StreamingPreferences::VDS_FORCE_SOFTWARE) {
+            // PyroWave decodes on the GPU and the library ships no software decoder, so
+            // "force software decoding" and PyroWave cannot both be honoured. Before this
+            // branch existed the preference was ignored here (the probe below asked the
+            // hard-coded VDS_FORCE_HARDWARE question) and again in
+            // FFmpegVideoDecoder::initializePyroWave(), which built a D3D11 renderer and ran
+            // the GPU path regardless - so the setting appeared to do nothing, and on a PC
+            // whose GPU cannot decode PyroWave the stream failed instead of falling back.
+            // Drop to H.264, exactly as the two branches around this one do.
+            emitLaunchWarning(tr("PyroWave decodes on the GPU and has no software decoder, so it can't run with software decoding forced. Using H.264 instead."));
+            m_SupportedVideoFormats.removeByMask(VIDEO_FORMAT_MASK_PYROWAVE);
+        }
         else if (getDecoderAvailability(testWindow,
-                                        StreamingPreferences::VDS_FORCE_HARDWARE,
+                                        m_Preferences->videoDecoderSelection,
                                         m_SupportedVideoFormats.front(),
                                         m_StreamConfig.width,
                                         m_StreamConfig.height,
