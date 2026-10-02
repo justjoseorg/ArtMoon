@@ -542,15 +542,22 @@ wayland {
 
 # PyroWave (6.4.0, from Nonary's vrr18): the codec decodes in Vulkan into surfaces it shares
 # with the renderer - D3D11 textures on Windows, libplacebo textures on the renderer's own
-# VkDevice on Linux. The library is the pyrowave/ subproject (see moonlight-qt.pro, whose
-# condition must match this one).
+# VkDevice on Linux. The library is the pyrowave/ subproject (see moonlight-qt.pro).
 win32:!winrt:contains(QT_ARCH, x86_64):!disable-pyrowave {
     message(PyroWave decoder enabled)
     CONFIG += pyrowave
 }
 linux:contains(QT_ARCH, x86_64):!disable-pyrowave {
-    message(PyroWave decoder enabled)
-    CONFIG += pyrowave
+    # On Linux the codec hands its decoded planes over through the libplacebo Vulkan
+    # renderer, so it is only usable where that renderer was actually found. Without this
+    # the PyroWave sources would be compiled against headers that are not there.
+    libplacebo {
+        message(PyroWave decoder enabled)
+        CONFIG += pyrowave
+    }
+    else {
+        message(PyroWave disabled: it decodes through the libplacebo Vulkan renderer which was not found)
+    }
 }
 pyrowave {
     DEFINES += HAVE_PYROWAVE

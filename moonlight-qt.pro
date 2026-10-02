@@ -12,9 +12,9 @@ win32:!winrt {
     app.depends += AntiHooking
 }
 
-# PyroWave codec library (6.4.0, from Nonary's vrr18; see pyrowave/VENDOR.txt). Must match
-# the condition in app/app.pro. The Windows client decodes into D3D11 surfaces and the Linux
-# client into libplacebo/Vulkan ones, so both platforms need the library built.
+# PyroWave codec library (6.4.0, from Nonary's vrr18; see pyrowave/VENDOR.txt). The library
+# itself builds on anything in this condition; app/app.pro narrows the Linux side further,
+# because there the client can only use it through the libplacebo Vulkan renderer.
 win32:!winrt:contains(QT_ARCH, x86_64):!disable-pyrowave {
     SUBDIRS += pyrowave
     app.depends += pyrowave
