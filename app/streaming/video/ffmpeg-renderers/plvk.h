@@ -2,6 +2,9 @@
 
 #include "renderer.h"
 
+#include <memory>
+#include <mutex>
+
 #ifdef Q_OS_WIN32
 #define VK_USE_PLATFORM_WIN32_KHR
 #endif
@@ -9,6 +12,10 @@
 #include <libplacebo/log.h>
 #include <libplacebo/renderer.h>
 #include <libplacebo/vulkan.h>
+
+#if defined(HAVE_PYROWAVE) && defined(Q_OS_LINUX)
+#include "streaming/video/pyrowave/pyrowaveplacebo.h"
+#endif
 
 class PlVkRenderer : public IFFmpegRenderer {
 public:
@@ -28,6 +35,9 @@ public:
     virtual int getDecoderCapabilities() override;
     virtual bool isPixelFormatSupported(int videoFormat, enum AVPixelFormat pixelFormat) override;
     virtual AVPixelFormat getPreferredPixelFormat(int videoFormat) override;
+#if defined(HAVE_PYROWAVE) && defined(Q_OS_LINUX)
+    virtual IPyroWaveVulkanPool* getPyroWaveVulkanPool() override { return m_PyroWavePool.get(); }
+#endif
 
 private:
     static void lockQueue(AVHWDeviceContext *dev_ctx, uint32_t queue_family, uint32_t index);
@@ -35,6 +45,10 @@ private:
     static void overlayUploadComplete(void* opaque);
 
     bool mapAvFrameToPlacebo(const AVFrame *frame, pl_frame* mappedFrame);
+
+    // Submits the pending swapchain frame under the command lock, which the PyroWave
+    // surface pool also records its holds under.
+    bool submitSwapchainFrame();
     bool populateQueues(int videoFormat);
     bool chooseVulkanDevice(PDECODER_PARAMETERS params, bool hdrOutputRequired);
     bool tryInitializeDevice(VkPhysicalDevice device, VkPhysicalDeviceProperties* deviceProps,
@@ -64,6 +78,15 @@ private:
     // Pending swapchain state shared between waitToRender(), renderFrame(), and cleanupRenderContext()
     pl_swapchain_frame m_SwapchainFrame = {};
     bool m_HasPendingSwapchainFrame = false;
+
+    // Guards command recording and swapchain submission. pl_swapchain_submit_frame() takes
+    // libplacebo's pending graphics command outside its own lock, so a command begun on another
+    // thread at that moment corrupts the queue's sync value. PyroWave surface holds record
+    // commands on the decoder thread, so every submit below must be taken under this lock.
+    std::mutex m_CommandLock;
+#if defined(HAVE_PYROWAVE) && defined(Q_OS_LINUX)
+    std::unique_ptr<PyroWavePlaceboPool> m_PyroWavePool;
+#endif
 
     // Overlay state
     SDL_SpinLock m_OverlayLock = 0;

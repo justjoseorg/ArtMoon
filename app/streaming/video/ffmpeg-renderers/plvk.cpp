@@ -321,6 +321,15 @@ bool PlVkRenderer::tryInitializeDevice(VkPhysicalDevice device, VkPhysicalDevice
     vkParams.opt_extensions = k_OptionalDeviceExtensions;
     vkParams.num_opt_extensions = SDL_arraysize(k_OptionalDeviceExtensions);
     vkParams.extra_queues = m_HwAccelBackend ? VK_QUEUE_FLAG_BITS_MAX_ENUM : 0;
+#if defined(HAVE_PYROWAVE) && defined(Q_OS_LINUX)
+    // PyroWave decodes into planes this renderer owns, so the device features its decoder
+    // needs must be requested before the device exists. Only asked for when the session
+    // may actually use it.
+    const bool pyroWave = (decoderParams->videoFormat & VIDEO_FORMAT_MASK_PYROWAVE) != 0;
+    if (pyroWave) {
+        vkParams.features = PyroWavePlaceboPool::requestedFeatures();
+    }
+#endif
     m_Vulkan = pl_vulkan_create(m_Log, &vkParams);
     if (m_Vulkan == nullptr) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
@@ -328,6 +337,19 @@ bool PlVkRenderer::tryInitializeDevice(VkPhysicalDevice device, VkPhysicalDevice
                      deviceProps->deviceName);
         return false;
     }
+
+#if defined(HAVE_PYROWAVE) && defined(Q_OS_LINUX)
+    if (pyroWave) {
+        if (PyroWavePlaceboPool::supported(m_Vulkan)) {
+            m_PyroWavePool = std::make_unique<PyroWavePlaceboPool>(m_PlVkInstance, m_Vulkan, m_CommandLock);
+        }
+        else {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Vulkan device '%s' lacks features to decode PyroWave into renderer surfaces",
+                        deviceProps->deviceName);
+        }
+    }
+#endif
 
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "Vulkan rendering device chosen: %s",
@@ -543,6 +565,23 @@ bool PlVkRenderer::prepareDecoderContext(AVCodecContext *context, AVDictionary *
 
 bool PlVkRenderer::mapAvFrameToPlacebo(const AVFrame *frame, pl_frame* mappedFrame)
 {
+#if defined(HAVE_PYROWAVE) && defined(Q_OS_LINUX)
+    if (m_PyroWavePool && m_PyroWavePool->ownsFrame(frame)) {
+        // The decoded planes are already Vulkan textures owned by the pool, so there is no
+        // libplacebo mapping to make. The AVFrame still carries a planar software format
+        // while its pixels are being decoded on the GPU, so establish decode completion
+        // before anything may sample them.
+        constexpr uint64_t kDecodeReadyTimeoutNs = 1000ULL * 1000ULL * 1000ULL;
+        const VkResult status = m_PyroWavePool->waitForFrame(frame, kDecodeReadyTimeoutNs);
+        if (status != VK_SUCCESS) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "PyroWave GPU decode completion wait failed: %d", int(status));
+            return false;
+        }
+        return m_PyroWavePool->mapFrame(frame, mappedFrame);
+    }
+#endif
+
     pl_avframe_params mapParams = {};
     mapParams.frame = frame;
     mapParams.tex = m_Textures;
@@ -755,12 +794,22 @@ void PlVkRenderer::waitToRender()
     }
 }
 
+bool PlVkRenderer::submitSwapchainFrame()
+{
+    // pl_swapchain_submit_frame() takes libplacebo's pending graphics command outside the lock
+    // that guards command recording. A PyroWave surface hold recording on the decoder thread at
+    // that moment would corrupt the queue's sync value, so the submit takes the same lock the
+    // pool takes for its holds.
+    std::lock_guard<std::mutex> lock(m_CommandLock);
+    return pl_swapchain_submit_frame(m_Swapchain);
+}
+
 void PlVkRenderer::cleanupRenderContext()
 {
     // We have to submit a pending swapchain frame before shutting down
     // in order to release a mutex that pl_swapchain_start_frame() acquires.
     if (m_HasPendingSwapchainFrame) {
-        pl_swapchain_submit_frame(m_Swapchain);
+        submitSwapchainFrame();
         m_HasPendingSwapchainFrame = false;
     }
 }
@@ -891,7 +940,7 @@ void PlVkRenderer::renderFrame(AVFrame *frame)
 
     // Submit the frame for display and swap buffers
     m_HasPendingSwapchainFrame = false;
-    if (!pl_swapchain_submit_frame(m_Swapchain)) {
+    if (!submitSwapchainFrame()) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "pl_swapchain_submit_frame() failed");
 
@@ -914,6 +963,10 @@ UnmapExit:
         pl_tex_destroy(m_Vulkan->gpu, &texture);
     }
 
+#if defined(HAVE_PYROWAVE) && defined(Q_OS_LINUX)
+    // Pool-owned planes are not libplacebo mappings, so there is nothing to unmap.
+    if (!(m_PyroWavePool && m_PyroWavePool->ownsFrame(frame)))
+#endif
     pl_unmap_avframe(m_Vulkan->gpu, &mappedFrame);
 }
 
@@ -925,6 +978,10 @@ bool PlVkRenderer::testRenderFrame(AVFrame *frame)
         return false;
     }
 
+#if defined(HAVE_PYROWAVE) && defined(Q_OS_LINUX)
+    // Pool-owned planes are not libplacebo mappings, so there is nothing to unmap.
+    if (!(m_PyroWavePool && m_PyroWavePool->ownsFrame(frame)))
+#endif
     pl_unmap_avframe(m_Vulkan->gpu, &mappedFrame);
     return true;
 }

@@ -13,8 +13,13 @@ win32:!winrt {
 }
 
 # PyroWave codec library (6.4.0, from Nonary's vrr18; see pyrowave/VENDOR.txt). Must match
-# the condition in app/app.pro. Windows only here: the Linux branch of Nonary's .pro is not taken.
+# the condition in app/app.pro. The Windows client decodes into D3D11 surfaces and the Linux
+# client into libplacebo/Vulkan ones, so both platforms need the library built.
 win32:!winrt:contains(QT_ARCH, x86_64):!disable-pyrowave {
+    SUBDIRS += pyrowave
+    app.depends += pyrowave
+}
+linux:contains(QT_ARCH, x86_64):!disable-pyrowave {
     SUBDIRS += pyrowave
     app.depends += pyrowave
 }

@@ -540,10 +540,15 @@ wayland {
     HEADERS += streaming/video/ffmpeg-renderers/pacer/waylandvsyncsource.h
 }
 
-# PyroWave (6.4.0, from Nonary's vrr18): the codec decodes in Vulkan into D3D11 surfaces it
-# shares with the renderer. The library is the pyrowave/ subproject (see moonlight-qt.pro,
-# whose condition must match this one). Nonary's Linux branch (libplacebo) is not taken.
+# PyroWave (6.4.0, from Nonary's vrr18): the codec decodes in Vulkan into surfaces it shares
+# with the renderer - D3D11 textures on Windows, libplacebo textures on the renderer's own
+# VkDevice on Linux. The library is the pyrowave/ subproject (see moonlight-qt.pro, whose
+# condition must match this one).
 win32:!winrt:contains(QT_ARCH, x86_64):!disable-pyrowave {
+    message(PyroWave decoder enabled)
+    CONFIG += pyrowave
+}
+linux:contains(QT_ARCH, x86_64):!disable-pyrowave {
     message(PyroWave decoder enabled)
     CONFIG += pyrowave
 }
@@ -558,12 +563,20 @@ pyrowave {
         streaming/video/pyrowave/pyrowaveframing.h \
         streaming/video/pyrowave/pyrowavesurfaces.h
 
+    # The renderer-side half: the surface pool that owns the decoded planes in the renderer's
+    # own graphics API. Windows shares them as D3D11 textures; Linux as libplacebo textures.
+    linux {
+        SOURCES += streaming/video/pyrowave/pyrowaveplacebo.cpp
+        HEADERS += streaming/video/pyrowave/pyrowaveplacebo.h
+    }
+
     # Only pyrowave.h is included from the vendored tree
     INCLUDEPATH += $$PWD/../pyrowave/pyrowave
 
     win32:CONFIG(release, debug|release): LIBS += -L$$OUT_PWD/../pyrowave/release/ -lpyrowave
     else:win32:CONFIG(debug, debug|release): LIBS += -L$$OUT_PWD/../pyrowave/debug/ -lpyrowave
     win32: LIBS += -luser32
+    unix: LIBS += -L$$OUT_PWD/../pyrowave/ -lpyrowave -ldl -lpthread
 }
 
 RESOURCES += \
