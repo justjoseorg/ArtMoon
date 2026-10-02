@@ -5,6 +5,17 @@ ArtMoon - ChangeLog - Developed by onaiaku & Rias
 https://github.com/onaiaku/ArtMoon
 
 --------------------------------------
+**Version 1.7.0 (02/10/2026)**
+--------------------------------------
+
+A fifth video codec joins the list: PyroWave.
+
+**New — 1**
+
+**Streaming**
+- PyroWave is a fifth option in the Video codec list, beside Auto, H.264, HEVC and AV1. It is built for a wired network with bandwidth to spare: it spends more bits than the other codecs, and in exchange the picture never has to resynchronise, so it suits a link with room to spare and suffers on Wi-Fi or at a low bitrate. Picking it raises the bitrate to a level it is worth using at, because left at the other codecs' setting it looks worse than they do. It only works against a host that supports it — every other host keeps streaming H.264, HEVC or AV1 — and a short note appears when you pick it, so nobody has to guess why the picture changed. Available on Windows and Linux.
+
+--------------------------------------
 **Version 1.6.0 (02/10/2026)**
 --------------------------------------
 

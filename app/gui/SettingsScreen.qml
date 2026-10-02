@@ -5918,7 +5918,7 @@ FocusScope {
     NavigableMessageDialog {
         id: pyroWaveNoticeDialog
         headerText: qsTr("PYROWAVE")
-        text: qsTr("PyroWave is for a wired network with bandwidth to spare: it needs hundreds of Mbps for a clean picture, so raise the bitrate. It needs a Vibeshine or Vibepollo host that supports it; other hosts stream H.264.")
+        text: qsTr("PyroWave is for a wired network with bandwidth to spare: it needs hundreds of Mbps for a clean picture, so raise the bitrate. It needs an ArtLight or a PyroWave compatible host that supports it; other hosts stream H.264, HEVC, AV1.")
         standardButtons: Dialog.Ok
     }
 
