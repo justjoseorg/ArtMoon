@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QTimer>
 #include <QVariantList>
 
 class QQmlEngine;
@@ -127,6 +128,11 @@ private:
     static QString bundledHelperPath();
     static QString bundledPolicyPath();
 
+    /* The bounded second look after a toggle. See scheduleSettle() in the .cpp. */
+    void scheduleSettle();
+    void settle();
+    bool anyUnsettled() const;
+
     QVariantList m_Devices;
     bool m_Available = false;
     QString m_UnavailableReason;
@@ -134,4 +140,7 @@ private:
     QString m_CanShareReason;
     bool m_CanInstallService = false;
     bool m_InstallingService = false;
+
+    QTimer m_SettleTimer;
+    int m_SettleTries = 0;
 };

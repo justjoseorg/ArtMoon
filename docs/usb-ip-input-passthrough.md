@@ -157,6 +157,19 @@ can spawn anything, so it no longer depends on its caller for that — but setui
 this one program the only thing between a local user and root. Polkit grants the same privilege with the system's
 own session scoping, an audit trail, and no setuid binary on the machine.
 
+**The outcome is not the request.** `setWanted()` asks, then has to *look again*: the label a user reads belongs
+to the machine, not to what we asked for. The first Linux end-to-end test on the z13 proved the privilege path and
+caught this in the same minute — the journal shows the bind landing (`usbip-host 3-10: register new device`) while
+the row still read "Not shared yet", because the code re-marked the rows from the remembered intent instead of
+re-reading. It re-reads now, and takes one small bounded second look (`kSettleIntervalMs`) because the kernel
+registers the device a heartbeat after the helper returns. That is the same rule the rest of this design is
+already held to — `canShare` and `canInstallService` are both decided from files, never from an exit code —
+applied to the aftermath of our own action.
+
+**Known follow-up, not in this build.** `refresh()` runs once, at construction. Nothing re-reads when the Input
+tab becomes visible, so a device released outside ArtMoon — unplugged, or unbound by hand — reads stale until the
+app restarts. A `refresh()` on the tab becoming visible is the obvious fix.
+
 ### Windows
 
 The installer creates the service (`ArtMoonInputService`) — the same shape as the service `usbipd-win` installs

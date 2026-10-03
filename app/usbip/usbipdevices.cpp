@@ -42,6 +42,16 @@ const char *kHelperPathLinux    = "/usr/libexec/artmoon-input-service";
  */
 const char *kPolicyPathLinux    = "/usr/share/polkit-1/actions/org.artmoon.input-service.policy";
 
+/*
+ * The bounded second look after a toggle. See scheduleSettle().
+ *
+ * A bind is not finished when pkexec exits, so the re-read that follows a toggle can still
+ * catch the machine mid-change. Short on purpose: this covers the kernel registering the
+ * device a heartbeat after the helper returns, not a slow operation.
+ */
+constexpr int kSettleIntervalMs = 1200;
+constexpr int kSettleTries      = 6;
+
 /* Platform tool that enumerates. `usbipd` is not on PATH by default on Windows. */
 QString usbipdProgram()
 {
@@ -104,6 +114,8 @@ QStringList exportedBusidsLinux()
 UsbIpDevices::UsbIpDevices(QObject *parent)
     : QObject(parent)
 {
+    m_SettleTimer.setSingleShot(true);
+    connect(&m_SettleTimer, &QTimer::timeout, this, &UsbIpDevices::settle);
     refresh();
 }
 
@@ -396,7 +408,68 @@ void UsbIpDevices::setWanted(const QString &busid, bool wanted)
 #endif
     }
 
-    rebuild();
+    /*
+     * Re-read, not re-mark.
+     *
+     * This used to be rebuild(), which only restated the request: it re-marked each row against
+     * the remembered intent and left `shared` exactly as the last enumeration found it. So a
+     * device the service had genuinely bound kept reading "Not shared yet" until the app was
+     * restarted — the label describing what we asked for instead of what the machine did, on
+     * the one screen whose whole job is telling those two apart. Verified on the z13: the bind
+     * landed (kernel: `usbip-host 3-10: register new device`) while the row still said
+     * "not shared yet".
+     *
+     * refresh() reads /sys and settles it. Everything this class reports is decided from an
+     * artifact — the helper, the policy, the driver binding — and this is that same rule
+     * applied to the aftermath of our own action.
+     */
+    refresh();
+    scheduleSettle();
+}
+
+/*
+ * A bind is not finished when pkexec exits.
+ *
+ * The helper returns, and the kernel registers the device with usbip-host a moment later. The
+ * immediate refresh above usually catches it and cannot be relied on to. This is the small
+ * bounded second look that covers the gap.
+ *
+ * Bounded deliberately, and it stops as soon as every wanted device matches reality either
+ * way. A label that corrects itself within a second is just a label; a permanent poll is a
+ * background cost nobody asked for and a thing to explain later.
+ */
+void UsbIpDevices::scheduleSettle()
+{
+    m_SettleTries = 0;
+    m_SettleTimer.start(kSettleIntervalMs);
+}
+
+void UsbIpDevices::settle()
+{
+    refresh();
+
+    if (anyUnsettled() && ++m_SettleTries < kSettleTries) {
+        m_SettleTimer.start(kSettleIntervalMs);
+    }
+}
+
+/* True while any device's label disagrees with the machine. */
+bool UsbIpDevices::anyUnsettled() const
+{
+    const QStringList wanted = wantedBusids();
+
+    for (const auto &entry : m_Devices) {
+        const QVariantMap row = entry.toMap();
+        const QString busid = row.value(QStringLiteral("busid")).toString();
+        if (busid.isEmpty()) {
+            continue;
+        }
+        if (wanted.contains(busid) != row.value(QStringLiteral("shared")).toBool()) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void UsbIpDevices::installInputService()
