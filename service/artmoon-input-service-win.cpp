@@ -32,6 +32,7 @@
 #define _UNICODE
 
 #include <windows.h>
+#include <sddl.h>   /* ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1 */
 
 #include <cstdio>
 #include <string>
