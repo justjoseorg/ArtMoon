@@ -152,6 +152,7 @@ ArtLight Control (host PC)  →  Named Pipe  →  ArtLightControlService (LocalS
 - [**Moonlight**](https://github.com/moonlight-stream/moonlight-qt) — the open-source client this fork is built on; full credit to its contributors
 - [**ArtLight**](https://github.com/onaiaku/ArtLight) — the host-side companion; the paired features above are its half of the bridge
 - [**Vibeshine**](https://github.com/Nonary/vibeshine) and [**Vibepollo**](https://github.com/Nonary/Vibepollo) — fully supported hosts
+- [**usbipd-win**](https://github.com/dorssel/usbipd-win) — the USB/IP engine behind device sharing. Its installer is carried inside ArtMoon's Windows setup, so sharing devices works on a PC that has never had USB/IP, and its licence is the GPL-3.0 that ArtMoon is itself released under
 
 > ⚠️ **Not affiliated with or endorsed by the Moonlight project.** For upstream Moonlight support, use the [official moonlight client repo](https://github.com/moonlight-stream/moonlight-qt).
 

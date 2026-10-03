@@ -185,7 +185,12 @@ void UsbIpDevices::refresh()
     // ── Can this machine be shared from at all? ───────────────────────────────
     if (program.isEmpty()) {
 #ifdef Q_OS_WIN32
-        m_UnavailableReason = tr("USB/IP is not installed on this PC.");
+        // The engine ships inside ArtMoon's own installer, so the remedy is that installer
+        // rather than a trip to the internet — which is what lets this sentence name it. Both
+        // branches used to carry the identical string inside a Windows-only #ifdef, which said
+        // nothing at all.
+        m_UnavailableReason = tr("USB/IP is not installed on this PC. Re-running the ArtMoon "
+             "installer with \"Device sharing\" ticked will add it.");
 #else
         m_UnavailableReason = tr("USB/IP is not installed on this PC.");
 #endif

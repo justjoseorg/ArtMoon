@@ -12,6 +12,35 @@
 ; file ArtMoon_<old>_Installer, with nothing to notice it by.
 #define SourceDir "build\deploy-x64-release"
 
+; ── The USB/IP engine ────────────────────────────────────────────────────────
+; ArtMoon cannot share a USB device by itself. It reads `usbipd list` and runs
+; `usbipd bind` through the input service, so usbipd-win is a hard dependency, not
+; an optional extra — and until now it was an unstated one: a PC without it got an
+; empty USB tab and no route out. It is carried here the way ArtLight carries its
+; USB/IP client, and the version and hash are pinned in the build workflow because
+; this file is executed with administrator rights on a user's machine.
+;
+; Carried only when the build actually fetched it. A local ISCC run without the
+; payload compiles to an installer with no Device sharing task, rather than one
+; whose tick box silently does nothing — the same rule the ArtLight bootstrapper
+; holds itself to with HasEmbeddedControlPayload().
+; ⚠️ No backslash may appear inside an ISPP string literal. ISPP escapes the quoting
+; character (and C-style escapes are live), so "build\vendor\" is a broken string and
+; "build\vendor" is a vertical tab. Only the backslash-free filename is built here; the
+; directory is written out at each of the two places that need it — the FileExists probe
+; below (forward slashes, which Win32 accepts) and the Inno-level Source/Parameters
+; strings, where a backslash is native and safe.
+#define UsbipdVersion "5.3.0"
+#define UsbipdMsi "usbipd-win_" + UsbipdVersion + "_x64.msi"
+; Hard stop, not a graceful skip. An installer compiled without the payload has no Device
+; sharing task, so every PC that has not already got usbipd-win keeps the dead end this
+; payload exists to remove — and nothing about the installer would say so. The build
+; workflow fetches and hash-checks the file before compiling, so this only ever fires for a
+; local ISCC run that has not done that, which is exactly when someone needs telling.
+#if !FileExists(AddBackslash(SourcePath) + "build/vendor/" + UsbipdMsi)
+  #error USB/IP payload missing. Fetch usbipd-win into build/vendor/ first - see the Fetch the bundled USB/IP engine step in .github/workflows/build-windows-installer.yml
+#endif
+
 [Setup]
 AppId={{B7A2C3D4-E5F6-7890-ABCD-EF1234567890}
 AppName={#AppName}
@@ -58,6 +87,10 @@ WelcomeLabel2=
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 Name: "xboxtile"; Description: "Add an icon to the Xbox app's 'My apps' section"; GroupDescription: "{cm:AdditionalIcons}"
+; checkedonce, not checked: ticked by default because a PC without usbipd-win has no working
+; USB tab at all — the common case is the one that needs it. It stays unticked for anyone
+; who has turned it off, so an upgrade never quietly reverses their choice.
+Name: "usbipdwin"; Description: "USB/IP device sharing support (usbipd-win) — required to share devices with ArtLight"; GroupDescription: "Device sharing:"; Flags: checkedonce
 
 [Files]
 ; portable.dat excluded: it would force Qt to write settings/cache to {app}
@@ -76,6 +109,10 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; \
 Source: "{#SourceDir}\gamecontrollerdb.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "installer\resources\artmoon.png"; Flags: dontcopy
 Source: "changelog.txt"; DestDir: "{app}"; Flags: ignoreversion
+; {tmp} and deleteafterinstall: this is an installer, not something ArtMoon needs at
+; runtime. Setup's own [Run] entries execute elevated, which is what usbipd-win needs —
+; it installs a service, two drivers and the TCP 3240 firewall rule.
+Source: "build\vendor\{#UsbipdMsi}"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
@@ -116,6 +153,14 @@ Filename: "{app}\{#AppExeName}"; Parameters: "--register-xbox-tile"; \
 ; stopped running Setup /VERYSILENT (14/09/2026).
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; \
     Flags: nowait postinstall skipifsilent
+; Gated on the Device sharing task. No runasoriginaluser here, unlike the Xbox tile above:
+; usbipd-win installs drivers and a firewall rule and genuinely needs the elevated token.
+; /qn and /norestart keep it silent inside our own wizard; an already-installed copy is a
+; no-op, and MSI refuses a downgrade rather than replacing a newer one.
+Filename: "{sys}\msiexec.exe"; Parameters: "/i ""{tmp}\{#UsbipdMsi}"" /qn /norestart"; \
+    StatusMsg: "Installing USB/IP device sharing support..."; \
+    Tasks: usbipdwin; \
+    Flags: runhidden waituntilterminated
 
 [UninstallRun]
 ; Remove the input service before its files go. Stopping is allowed to fail — a service
