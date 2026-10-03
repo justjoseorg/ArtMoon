@@ -166,6 +166,9 @@ registers the device a heartbeat after the helper returns. That is the same rule
 already held to — `canShare` and `canInstallService` are both decided from files, never from an exit code —
 applied to the aftermath of our own action.
 
+Verified on the z13, 2026-10-03: toggle on → the row reads **Shared** within a second, toggle off → the device
+is released, and in both directions the kernel agrees with the label.
+
 **Known follow-up, not in this build.** `refresh()` runs once, at construction. Nothing re-reads when the Input
 tab becomes visible, so a device released outside ArtMoon — unplugged, or unbound by hand — reads stale until the
 app restarts. A `refresh()` on the tab becoming visible is the obvious fix.
