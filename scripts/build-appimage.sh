@@ -77,10 +77,46 @@ pushd $BUILD_FOLDER
 make -j$(nproc) $(echo "$BUILD_CONFIG" | tr '[:upper:]' '[:lower:]') || fail "Make failed!"
 popd
 
-echo Deploying to staging directory
+echo "Deploying to staging directory"
 pushd $BUILD_FOLDER
 make install || fail "Make install failed!"
 popd
+
+# ── The input service ──────────────────────────────────────────────────────────
+# The privileged helper that does the `bind` step (docs/usb-ip-input-passthrough.md). It is
+# compiled here rather than by qmake because it shares nothing with the app — no Qt, nothing
+# beyond libc — which is deliberate: it runs as root, so it stays small enough to read.
+#
+# It CANNOT act from inside the AppImage. A privileged helper has to live at a path the
+# system owns, never in a user-writable mount, so the image is only the delivery vehicle:
+# ArtMoon offers a one-time install that asks for administrator rights once and copies it
+# out to where it belongs. That is why the path inside the image is the path it will occupy
+# on the system — the copy is then a copy and not a remapping.
+#
+# -static on purpose. It is copied onto hosts whose libstdc++ may be older than the one it
+# was built against, and a root-owned helper that fails to load because of a library version
+# is a failure the user cannot diagnose and we cannot see.
+echo Building the input service
+mkdir -p "$DEPLOY_FOLDER/usr/libexec"
+g++ -std=c++17 -O2 -Wall -Wextra -static \
+    "$SOURCE_ROOT/service/artmoon-input-service.cpp" \
+    -o "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" \
+    || fail "Failed to build the input service"
+chmod 755 "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service"
+# Prove it is what it claims to be before it is packed: a dynamically linked binary here
+# would still build and still pass every other check, and would then fail on an older host.
+file "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" | grep -q "statically linked" \
+    || fail "The input service is not statically linked - it would depend on the host's libstdc++"
+# And prove its guards survived this build. These are refusals, and a refusal that stopped
+# happening would not fail anything later: it would be a privilege-escalation hole in a
+# program that runs as root.
+"$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" status >/dev/null || fail "The input service cannot run"
+for BAD in '9-3; rm -rf /' '../9-3' 'a-3' '' ; do
+    if "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" reconcile --want "$BAD" --dry-run >/dev/null 2>&1; then
+        fail "The input service accepted a bad busid: '$BAD'"
+    fi
+done
+echo "Input service built, static, and refusing what it must refuse"
 
 # Pre-seed the QML modules the app imports but linuxdeploy-plugin-qt's bundle
 # step has historically missed when the host's Qt install lacks them (the 1.0.0
