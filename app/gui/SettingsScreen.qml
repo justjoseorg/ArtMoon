@@ -2538,6 +2538,83 @@ FocusScope {
                             glyph: settingsScreen._usbNoticeGlyph
                         }
 
+                        // ── Setting the service up ────────────────────────────
+                        // Only appears when this build actually carries the helper and it is
+                        // not in place yet, so the row can never lead nowhere: ArtMoon asks for
+                        // administrator rights once, places it, and the switches above come
+                        // alive. A build with nothing to install shows no row at all — the same
+                        // rule the switches are held to.
+                        Rectangle {
+                            visible: UsbIpDevices.canInstallService
+                            width: usbCol.width
+                            height: settingsScreen._rowHeightTall
+                            color: "transparent"
+
+                            Column {
+                                anchors.left: parent.left
+                                anchors.leftMargin: settingsScreen._px(16)
+                                anchors.right: usbInstallButton.left
+                                anchors.rightMargin: settingsScreen._px(12)
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: settingsScreen._px(3)
+
+                                Label {
+                                    width: parent.width
+                                    text: qsTr("Set up the input service")
+                                    elide: Text.ElideRight
+                                    font.family: Theme.family
+                                    font.pixelSize: settingsScreen._px(Theme.fontBody)
+                                    font.bold: true
+                                    color: settingsScreen._text
+                                }
+                                Label {
+                                    width: parent.width
+                                    wrapMode: Text.WordWrap
+                                    text: UsbIpDevices.installingService
+                                          ? qsTr("Waiting for the password prompt…")
+                                          : qsTr("You will be asked for your password once. ArtMoon does the rest.")
+                                    font.family: Theme.family
+                                    font.pixelSize: settingsScreen._px(Theme.fontSmall)
+                                    color: settingsScreen._textDim
+                                }
+                            }
+
+                            Rectangle {
+                                id: usbInstallButton
+                                anchors.right: parent.right
+                                anchors.rightMargin: settingsScreen._px(16)
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: settingsScreen._px(96)
+                                height: settingsScreen._px(32)
+                                radius: settingsScreen._px(6)
+                                color: usbInstallArea.pressed ? settingsScreen._bg2 : "transparent"
+                                border.color: settingsScreen._border
+                                border.width: 1
+                                enabled: !UsbIpDevices.installingService
+                                opacity: enabled ? 1.0 : 0.4
+
+                                Label {
+                                    anchors.centerIn: parent
+                                    text: qsTr("Set up")
+                                    font.family: Theme.family
+                                    font.pixelSize: settingsScreen._px(Theme.fontSmall)
+                                    font.bold: true
+                                    color: settingsScreen._text
+                                }
+
+                                MouseArea {
+                                    id: usbInstallArea
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: UsbIpDevices.installInputService()
+                                }
+                            }
+                        }
+
+                        RowSeparator {
+                            visible: UsbIpDevices.canInstallService
+                        }
+
                         // One row per device. The list comes from the local enumeration, so
                         // this delegate is built from real hardware — on a PC with none of
                         // it, the block above carries the reason and this draws nothing.

@@ -68,6 +68,20 @@ class UsbIpDevices : public QObject
     /* Why `canShare` is false, ready to show in the row caption. */
     Q_PROPERTY(QString canShareReason READ canShareReason NOTIFY devicesChanged)
 
+    /*
+     * True when this build carries the service and could set it up here: the helper is inside
+     * the bundle but not yet at its system path.
+     *
+     * Separate from canShare because they answer different questions. canShare asks "can a
+     * toggle act right now"; this asks "is there something I can offer to fix that". A build
+     * with no helper to install must not show a button that leads nowhere — same rule as a
+     * switch that looks live and does nothing.
+     */
+    Q_PROPERTY(bool canInstallService READ canInstallService NOTIFY devicesChanged)
+
+    /* True while the install is in flight, so the UI can say what is happening. */
+    Q_PROPERTY(bool installingService READ installingService NOTIFY installingServiceChanged)
+
 public:
     explicit UsbIpDevices(QObject *parent = nullptr);
     ~UsbIpDevices() override;
@@ -79,6 +93,8 @@ public:
     QString unavailableReason() const { return m_UnavailableReason; }
     bool canShare() const { return m_CanShare; }
     QString canShareReason() const { return m_CanShareReason; }
+    bool canInstallService() const { return m_CanInstallService; }
+    bool installingService() const { return m_InstallingService; }
 
     /* Re-run the local enumeration and rebuild `devices`. Safe to call at any time. */
     Q_INVOKABLE void refresh();
@@ -91,17 +107,30 @@ public:
      */
     Q_INVOKABLE void setWanted(const QString &busid, bool wanted);
 
+    /*
+     * Put the bundled helper at its system path, asking for administrator rights once.
+     *
+     * No-ops unless canInstallService. Refreshes afterwards and decides from the result, not
+     * from the exit code: canShare is derived from the helper actually being present, and
+     * that is the only thing that turns the toggles live.
+     */
+    Q_INVOKABLE void installInputService();
+
 signals:
     void devicesChanged();
+    void installingServiceChanged();
 
 private:
     void rebuild();
     QStringList wantedBusids() const;
     void storeWantedBusids(const QStringList &busids);
+    static QString bundledHelperPath();
 
     QVariantList m_Devices;
     bool m_Available = false;
     QString m_UnavailableReason;
     bool m_CanShare = false;
     QString m_CanShareReason;
+    bool m_CanInstallService = false;
+    bool m_InstallingService = false;
 };
