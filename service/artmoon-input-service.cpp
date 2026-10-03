@@ -30,6 +30,19 @@
 //              2 bad arguments
 //              3 needs privileges, and was not run with --dry-run
 //
+// ── How this gets privileges on Linux ────────────────────────────────────────────
+//
+// Through pkexec, under the polkit action org.artmoon.input-service.reconcile — see
+// service/org.artmoon.input-service.policy. That action grants the active local session the
+// right to run this program with no authentication, so the single approval the user gives is
+// the one that placed this helper and that policy, not one per device toggle.
+//
+// A setuid binary is ruled out, and the reason is in this file: `usbip` is spawned by bare
+// name through execvp, which resolves it through PATH. As a setuid-root program that is a
+// root hole by construction — put a program called `usbip` in a directory earlier in PATH and
+// it runs as root. The PATH fix in main() below closes that regardless, but polkit gives the
+// same privilege with session scoping, an audit trail, and no setuid binary on the machine.
+//
 // ── Why the validation is this strict ────────────────────────────────────────────
 //
 // This program runs as root and its arguments come from an unprivileged process. A busid
@@ -40,6 +53,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <set>
@@ -327,6 +341,23 @@ bool ensureExporterModule()
 
 int main(int argc, char **argv)
 {
+    // ── Fix what execvp will find, before anything can run ────────────────────────────
+    //
+    // This program spawns `usbip` and `modprobe` by bare name, and execvp resolves a bare
+    // name through PATH. It runs as root and, on Linux, is started by an unprivileged
+    // process — so without this line, what actually executes would be decided by the
+    // environment it was handed, and a caller who can influence PATH would be choosing the
+    // program that runs as root.
+    //
+    // pkexec already sanitises PATH, so this is not closing a live hole; it is refusing to
+    // depend on the caller for it. The distinction is the difference between a fact about
+    // this file and a promise about pkexec — and it is what would still be true if anyone
+    // ever revisited the setuid question.
+    //
+    // setenv(..., 1) so it applies whether or not the caller set a PATH, and it sits above
+    // the argument parsing so no path through this program can precede it.
+    setenv("PATH", "/usr/sbin:/usr/bin:/sbin:/bin", 1);
+
     std::vector<std::string> args(argv + 1, argv + argc);
 
     bool dryRun = false;
