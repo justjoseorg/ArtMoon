@@ -110,6 +110,42 @@ foreach ($rel in @(
 }
 Ok "Unused Qt styles pruned"
 
+# ---------------------------------------------------------------------------
+# Step 8 — the privileged input service, compiled and its guards exercised
+# ---------------------------------------------------------------------------
+# ArtMoon cannot bind devices for itself: `bind` is refused without administrator
+# rights, so this service does it on the user's behalf. It runs as LocalSystem and
+# its input arrives from an unprivileged process, which is why the refusals matter
+# far more here than the happy path — a guard that quietly stopped holding would be
+# a privilege-escalation hole, not a cosmetic bug. `selftest` exercises them against
+# the hostile list without needing the service installed or a device bound.
+$serviceSrc = Join-Path $RepoRoot 'service\artmoon-input-service-win.cpp'
+$serviceExe = Join-Path $DeployFolder 'artmoon-input-service.exe'
+if (-not (Test-Path $serviceSrc)) { Fail "missing the input service source at $serviceSrc" }
+
+$serviceArgs = @('/nologo', '/EHsc', '/W4', '/O2', $serviceSrc,
+                 "/Fe:$serviceExe", "/Fo:$env:TEMP\artmoon-input-service.obj",
+                 '/link', 'advapi32.lib')
+
+if (Get-Command cl.exe -ErrorAction SilentlyContinue) {
+    & cl.exe @serviceArgs 2>&1 | Write-Host
+} else {
+    # The runner image normally has the tools on PATH already (build-arch.bat depends on
+    # it). This is the fallback rather than the assumption: cl.exe without INCLUDE/LIB
+    # set fails in a way that reads like a code error and is not one.
+    $vsDev = Get-ChildItem 'C:\Program Files\Microsoft Visual Studio\2022\*\Common7\Tools\VsDevCmd.bat' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $vsDev) { Fail "cl.exe is not on PATH and no VsDevCmd.bat was found" }
+    $cl = "`"$($vsDev.FullName)`" -arch=amd64 -host_arch=amd64 >nul && cl.exe " +
+          ($serviceArgs -join ' ')
+    cmd /c $cl 2>&1 | Write-Host
+}
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $serviceExe)) { Fail "the input service did not compile" }
+Ok "artmoon-input-service.exe compiled"
+
+& $serviceExe selftest 2>&1 | Write-Host
+if ($LASTEXITCODE -ne 0) { Fail "the input service's busid guards did not hold" }
+Ok "input service guards hold"
+
 $exe = Join-Path $DeployFolder 'ArtMoon.exe'
 if (-not (Test-Path $exe)) { Fail "deploy folder missing ArtMoon.exe" }
 $count = (Get-ChildItem -Recurse -File $DeployFolder).Count

@@ -4,6 +4,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QLocalSocket>
 #include <QProcess>
 #include <QQmlEngine>
 #include <QSettings>
@@ -254,16 +255,52 @@ void UsbIpDevices::setWanted(const QString &busid, bool wanted)
     // The desired set is handed over explicitly rather than read from a file: the helper runs
     // as root, so it must never be pointed at a path an unprivileged process can rewrite.
     if (m_CanShare) {
-        QProcess proc;
 #ifdef Q_OS_WIN32
-        // Windows gets its work over a local channel, not start arguments: `sc start` refuses
-        // a service that is already running (error 1056), so it cannot carry a new desired set.
-        // Until that channel lands the service reconciles against the intent it can see, and
-        // the app's own enumeration stays the authority on what is actually shared.
-        proc.start(QStringLiteral("sc"),
-                   { QStringLiteral("start"), QLatin1String(kServiceNameWindows),
-                     QStringLiteral("reconcile") });
+        /*
+         * The service is reached over its own local pipe — not through `sc start`, because a
+         * service that is already running refuses a start (error 1056), so start arguments
+         * could only ever deliver the first desired set and never another one.
+         *
+         * The PLAN is built here rather than in the service. This is the side that parses
+         * usbipd's table, so this is the side that knows what needs releasing — one parser in
+         * the product, and it is the one with tests. The service executes and refuses; it does
+         * not decide.
+         */
+        QStringList tokens;
+        for (const auto &entry : m_Devices) {
+            const QVariantMap row = entry.toMap();
+            const QString busid = row.value(QStringLiteral("busid")).toString();
+            if (busid.isEmpty()) {
+                continue;
+            }
+            const bool want = busids.contains(busid);
+            const bool shared = row.value(QStringLiteral("shared")).toBool();
+            if (want && !shared) {
+                tokens << (QStringLiteral("+") + busid);
+            }
+            else if (!want && shared) {
+                tokens << (QStringLiteral("-") + busid);
+            }
+        }
+
+        if (!tokens.isEmpty()) {
+            QLocalSocket service;
+            // Qt maps this onto \\.\pipe\ArtMoonInputService on Windows.
+            service.connectToServer(QStringLiteral("ArtMoonInputService"));
+            if (service.waitForConnected(2000)) {
+                service.write(QStringLiteral("reconcile %1\n")
+                                  .arg(tokens.join(QLatin1Char(' '))).toUtf8());
+                service.waitForBytesWritten(2000);
+                // The reply is read but not trusted, and not shown: `usbipd list` is the
+                // authority on what is actually shared, and that is what the next refresh()
+                // reads. It is also why a device stuck busy still reads "not shared yet"
+                // rather than done.
+                service.waitForReadyRead(3000);
+                service.disconnectFromServer();
+            }
+        }
 #else
+        QProcess proc;
         QStringList helperArgs{ QStringLiteral("reconcile") };
         for (const auto &busid : busids) {
             helperArgs << QStringLiteral("--want") << busid;
@@ -273,8 +310,8 @@ void UsbIpDevices::setWanted(const QString &busid, bool wanted)
                        << entry.toMap().value(QStringLiteral("busid")).toString();
         }
         proc.start(QLatin1String(kHelperPathLinux), helperArgs);
-#endif
         proc.waitForFinished(4000);
+#endif
     }
 
     rebuild();

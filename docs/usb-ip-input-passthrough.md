@@ -96,3 +96,47 @@ An empty `Persisted:` table in `usbipd list` does **not** clear a repeatable `De
 That message can mean the **vendor software** on the exporter (Razer Synapse and friends) is holding the HID
 interfaces open. The engine keeps them, so the exporter cannot release the device — and it reports the wrong
 cause. Stop the vendor engine on the exporter and the same attach succeeds.
+
+## The privileged service — how the desired set reaches it
+
+**Decided 2026-10-03.** `bind` is refused to a normal user (verified on the mini PC: a limited token gets
+`LastTaskResult : 10`), so ArtMoon cannot bind for itself. Each platform carries a small privileged local
+service that owns the bind step, and the app talks to it. **The user never sees a command line.**
+
+### Linux
+
+The helper is a static binary at `/usr/libexec/artmoon-input-service`. The AppImage carries a copy at *the same
+relative path it occupies on the system* (`usr/libexec/…`), so placing it is a copy and not a remapping — and a
+normally-installed ArtMoon resolves the bundled path to the real system path, which exists only once the helper
+is genuinely there. That relationship is what makes the app's "should I offer to set this up" answer honest.
+
+Setting it up is one administrator prompt: `pkexec install -m 0755 -o root -g root <bundled> <system>`.
+
+`install(1)` specifically, not a shell command and not a script carried in the bundle. Whatever is handed to
+pkexec runs as root, so it must be a system binary that takes two paths and does one thing — an approver can see
+exactly what is being authorised. Approving a script inside a user-writable mount would authorise *that script's
+path*, and anything able to write there could then get a program of its choosing run as root. `install` also
+applies mode and owner itself, so the helper never exists at its system path with the wrong ownership, not even
+briefly.
+
+### Windows
+
+The installer creates the service (`ArtMoonInputService`) — the same shape as the service `usbipd-win` installs
+for itself. The app never binds; the service does.
+
+**How the desired set reaches the service — and the two options that are ruled out:**
+
+- **Not `sc start … reconcile`.** A service that is already running refuses a start with error **1056**, so start
+  arguments cannot carry a *changing* desired set. They can only ever deliver the first one.
+- **Not a file.** Any path that a normal process can write, the service must not read as instruction. A file the
+  user's own session can rewrite would let anything on the machine choose which devices are offered over the
+  network — the same rule the Linux side is already held to. The desired set is *requested and validated*, never
+  trusted as stored state.
+- **A local named pipe, created by the service**, with an explicit DACL granting the interactive user and
+  administrators, and `PIPE_REJECT_REMOTE_CLIENTS` set so that a remote machine cannot reach it even if the pipe
+  name is known. The app sends the desired set on each change; the service validates every busid with the same
+  guards as the Linux helper and refuses anything it does not recognise.
+
+On both platforms the service keeps **no state of its own** that can disagree with the Input tab: it reconciles,
+it does not remember. `usbipd list` (Windows) and `/sys/bus/usb/drivers/usbip-host` (Linux) stay the authority on
+what is *actually* shared, which is why the tab can show "not shared yet" and mean it.

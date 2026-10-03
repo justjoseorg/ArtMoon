@@ -16,6 +16,7 @@ on:
       - 'app/**'
       - 'scripts/**'
       - 'libs/**'
+      - 'service/**'
       - 'ArtMoon.iss'
       - 'moonlight-qt.pro'
       - '.github/workflows/build-windows-installer.yml'

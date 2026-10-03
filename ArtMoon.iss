@@ -117,7 +117,66 @@ Filename: "{app}\{#AppExeName}"; Parameters: "--register-xbox-tile"; \
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; \
     Flags: nowait postinstall skipifsilent
 
+[UninstallRun]
+; Remove the input service before its files go. Stopping is allowed to fail — a service
+; that was never started, or already stopped, is not an error worth anyone's attention.
+; RunOnceId is required once a section has more than one entry.
+Filename: "{sys}\sc.exe"; Parameters: "stop ArtMoonInputService"; \
+    Flags: runhidden waituntilterminated; RunOnceId: "StopInputService"
+Filename: "{sys}\sc.exe"; Parameters: "delete ArtMoonInputService"; \
+    Flags: runhidden waituntilterminated; RunOnceId: "DeleteInputService"
+
 [Code]
+// ── The privileged input service ─────────────────────────────────────────────
+// ArtMoon cannot bind a USB device for itself: `bind` is refused without administrator
+// rights. This service does it on the user's behalf, over its own local pipe — which is
+// also why nothing about it needs a command line in front of the user, and why setting
+// it up can be a silent part of Setup. See docs/usb-ip-input-passthrough.md.
+//
+// Create-then-start, not configure: `sc create` fails when the service already exists,
+// and an upgrade always finds one, so any previous service is stopped and removed first.
+// Every one of those calls is allowed to fail — on a first install there is nothing to
+// stop, and that is not an error. Inno only complains when a program cannot be launched,
+// not when it exits non-zero, so no error handling is needed to get that behaviour.
+procedure InstallInputService;
+var
+  ResultCode: Integer;
+  ServiceExe: String;
+begin
+  ServiceExe := ExpandConstant('{app}\artmoon-input-service.exe');
+  if not FileExists(ServiceExe) then
+    Exit;
+
+  Exec(ExpandConstant('{sys}\sc.exe'), 'stop ArtMoonInputService', '',
+       SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\sc.exe'), 'delete ArtMoonInputService', '',
+       SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  if Exec(ExpandConstant('{sys}\sc.exe'),
+          'create ArtMoonInputService binPath= "' + ServiceExe + '" start= auto',
+          '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+    Exec(ExpandConstant('{sys}\sc.exe'), 'start ArtMoonInputService', '',
+         SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    InstallInputService;
+end;
+
+// A running service holds its own executable open, so an upgrade cannot replace the file
+// until it is stopped. This hook runs before the file copy — the only point early enough
+// to matter. Returning an empty string means carry on, not abort.
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\sc.exe'), 'stop ArtMoonInputService', '',
+       SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Result := '';
+end;
+
 // ── Stop Windows from maximising the wizard ──────────────────────────────────
 // On a handheld — the ROG Ally is where this shows up — the wizard opens filling
 // the whole screen, with the layout still drawn for a small window: the artwork
