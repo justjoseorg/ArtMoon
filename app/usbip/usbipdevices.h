@@ -70,6 +70,18 @@ class UsbIpDevices : public QObject
     Q_PROPERTY(QString canShareReason READ canShareReason NOTIFY devicesChanged)
 
     /*
+     * The last toggle that did not take, ready to show. Empty when the machine is doing
+     * what was asked of it.
+     *
+     * "Not shared yet" is honest and useless on its own: it says the request went out and
+     * the device did not change, but not whether anything was listening to it. A row that
+     * sits in that state forever with nothing else said is a dead switch with extra steps —
+     * and it is exactly how a service whose pipe had never once been created managed to look
+     * like a service with nothing to report.
+     */
+    Q_PROPERTY(QString toggleFailure READ toggleFailure NOTIFY devicesChanged)
+
+    /*
      * True when this build carries the service and could set it up here: the helper is inside
      * the bundle but not yet at its system path.
      *
@@ -94,6 +106,7 @@ public:
     QString unavailableReason() const { return m_UnavailableReason; }
     bool canShare() const { return m_CanShare; }
     QString canShareReason() const { return m_CanShareReason; }
+    QString toggleFailure() const { return m_ToggleFailure; }
     bool canInstallService() const { return m_CanInstallService; }
     bool installingService() const { return m_InstallingService; }
 
@@ -133,11 +146,15 @@ private:
     void settle();
     bool anyUnsettled() const;
 
+    /* Why a toggle did not take, as far as we can actually tell. See the .cpp. */
+    QString describeToggleFailure() const;
+
     QVariantList m_Devices;
     bool m_Available = false;
     QString m_UnavailableReason;
     bool m_CanShare = false;
     QString m_CanShareReason;
+    QString m_ToggleFailure;
     bool m_CanInstallService = false;
     bool m_InstallingService = false;
 

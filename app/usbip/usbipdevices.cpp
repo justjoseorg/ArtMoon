@@ -359,6 +359,13 @@ void UsbIpDevices::setWanted(const QString &busid, bool wanted)
     }
     storeWantedBusids(busids);
 
+    // A fresh attempt supersedes the last explanation: the user has just asked again, and
+    // the answer may be different this time.
+    if (!m_ToggleFailure.isEmpty()) {
+        m_ToggleFailure.clear();
+        emit devicesChanged();
+    }
+
     // Reconcile with the service. Absent service == the intent is still recorded, and
     // `shared` is left alone, so the tab shows "wanted, not shared" instead of pretending.
     //
@@ -425,7 +432,16 @@ void UsbIpDevices::setWanted(const QString &busid, bool wanted)
                        << entry.toMap().value(QStringLiteral("busid")).toString();
         }
         proc.start(QStringLiteral("pkexec"), helperArgs);
-        proc.waitForFinished(4000);
+        // The exit is checked, not ignored. A pkexec that refused — no policy, no session,
+        // helper not where we think it is — used to leave exactly the same mark as a bind
+        // that had merely not landed yet, so the row read "Not shared yet" for as long as
+        // anyone cared to look. Silence on this side is how a request that never ran passes
+        // for one still in flight.
+        if (!proc.waitForFinished(4000)
+            || proc.exitStatus() != QProcess::NormalExit
+            || proc.exitCode() != 0) {
+            m_ToggleFailure = tr("The input service refused the request for %1.").arg(busid);
+        }
 #endif
     }
 
@@ -469,9 +485,57 @@ void UsbIpDevices::settle()
 {
     refresh();
 
-    if (anyUnsettled() && ++m_SettleTries < kSettleTries) {
-        m_SettleTimer.start(kSettleIntervalMs);
+    if (!anyUnsettled()) {
+        // The machine is doing what was asked of it. Nothing left to explain.
+        if (!m_ToggleFailure.isEmpty()) {
+            m_ToggleFailure.clear();
+            emit devicesChanged();
+        }
+        return;
     }
+
+    if (++m_SettleTries < kSettleTries) {
+        m_SettleTimer.start(kSettleIntervalMs);
+        return;
+    }
+
+    // Out of tries and the machine still disagrees. Say so, rather than leaving the row to
+    // imply it forever. A message already set (the Linux refusal above) is more specific and
+    // is left alone.
+    if (m_ToggleFailure.isEmpty()) {
+        m_ToggleFailure = describeToggleFailure();
+    }
+    emit devicesChanged();
+}
+
+/*
+ * Why a toggle did not take, as far as we can actually tell.
+ *
+ * "Not shared yet" cannot distinguish a bind that is still landing from a request that
+ * nothing ever received — and the second looks exactly like the first, indefinitely. That is
+ * how a service which had been failing to create its pipe on every call since it started
+ * read as a service with nothing to report.
+ *
+ * So ask the question that separates them. Presence is not reachability: the registry says
+ * the service is installed, and this says whether it is listening. The same artifact rule
+ * the rest of this class is held to.
+ */
+QString UsbIpDevices::describeToggleFailure() const
+{
+    const QString names = wantedBusids().join(QStringLiteral(", "));
+
+#ifdef Q_OS_WIN32
+    QLocalSocket probe;
+    probe.connectToServer(QLatin1String(kServiceNameWindows));
+    if (!probe.waitForConnected(1500)) {
+        return tr("The ArtMoon input service is installed but is not answering, so %1 could "
+                  "not be shared. Sharing a device needs that service running.").arg(names);
+    }
+    probe.disconnectFromServer();
+#endif
+
+    return tr("The input service was asked about %1 and the device did not change. It can be "
+              "toggled again.").arg(names);
 }
 
 /* True while any device's label disagrees with the machine. */

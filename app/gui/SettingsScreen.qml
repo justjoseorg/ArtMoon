@@ -141,6 +141,11 @@ FocusScope {
             return qsTr("No USB devices are plugged into this PC.")
         if (!UsbIpDevices.canShare)
             return UsbIpDevices.canShareReason
+        // A toggle was asked for and the machine did not change. Worth saying even though the
+        // rows CAN act — "Not shared yet" alone reads the same whether the bind is still
+        // landing or nothing ever heard the request.
+        if (UsbIpDevices.toggleFailure !== "")
+            return UsbIpDevices.toggleFailure
         return ""
     }
     readonly property string _usbNoticeGlyph: {
@@ -148,6 +153,10 @@ FocusScope {
             return "\uD83D\uDD0C"     // 🔌 this PC cannot do it
         if (UsbIpDevices.devices.length === 0)
             return "\uD83D\uDD0D"     // 🔍 nothing to show
+        // Only when the rows CAN act: otherwise the reason above is a permission one and the
+        // key is the honest glyph. This changes nothing except the failed-toggle case.
+        if (UsbIpDevices.canShare && UsbIpDevices.toggleFailure !== "")
+            return "\u26A0\uFE0F"     // ⚠️ asked, and it did not take
         return "\uD83D\uDD11"         // 🔑 needs administrator rights
     }
 
