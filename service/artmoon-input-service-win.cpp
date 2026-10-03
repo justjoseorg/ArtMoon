@@ -324,12 +324,29 @@ void handleClient(HANDLE pipe)
  * any process on the machine could create this pipe name first and impersonate the service to
  * ArtMoon, and ArtMoon would happily talk to it.
  */
+/*
+ * Say WHICH call failed and what Windows said about it.
+ *
+ * This logged only "could not create the input pipe", with no error code and no clue which
+ * of the two calls it came from — which is how a service that had never once succeeded sat
+ * there looking like a service with nothing to report. The error is read here, immediately
+ * after the failing call, and never after LocalFree, which would have clobbered it.
+ */
+void logPipeFailure(const wchar_t *what, DWORD error)
+{
+    wchar_t message[192];
+    swprintf(message, 192, L"could not create the input pipe: %ls (win32 error %lu)",
+             what, static_cast<unsigned long>(error));
+    logEvent(EVENTLOG_ERROR_TYPE, message);
+}
+
 HANDLE createPipe()
 {
     PSECURITY_DESCRIPTOR descriptor = nullptr;
     if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
             L"D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;IU)",
             SDDL_REVISION_1, &descriptor, nullptr)) {
+        logPipeFailure(L"the pipe DACL would not parse", GetLastError());
         return INVALID_HANDLE_VALUE;
     }
 
@@ -338,11 +355,21 @@ HANDLE createPipe()
     sa.lpSecurityDescriptor = descriptor;
     sa.bInheritHandle       = FALSE;
 
+    // ⚠️ PIPE_REJECT_REMOTE_CLIENTS belongs in dwPipeMode, NOT dwOpenMode. Its bit (0x8) is
+    // not a legal dwOpenMode flag, so CreateNamedPipeW failed with ERROR_INVALID_PARAMETER
+    // (87) on every call this service ever made: it ran for hours logging "could not create
+    // the input pipe" every two seconds and never once had a pipe for ArtMoon to talk to,
+    // while ArtMoon's waitForConnected() timed out and the toggles did nothing, silently.
+    // Measured on the mini PC — as written, err=87; with the flag moved here, handle valid.
     HANDLE pipe = CreateNamedPipeW(
         kPipeName,
-        PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE | PIPE_REJECT_REMOTE_CLIENTS,
-        PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+        PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
+        PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
         1, 4096, 4096, 0, &sa);
+
+    if (pipe == INVALID_HANDLE_VALUE) {
+        logPipeFailure(L"CreateNamedPipeW refused", GetLastError());
+    }
 
     LocalFree(descriptor);
     return pipe;
@@ -353,7 +380,7 @@ void serve()
     while (WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
         HANDLE pipe = createPipe();
         if (pipe == INVALID_HANDLE_VALUE) {
-            logEvent(EVENTLOG_ERROR_TYPE, L"could not create the input pipe");
+            // createPipe() has already logged which call failed and why.
             Sleep(2000);
             continue;
         }
