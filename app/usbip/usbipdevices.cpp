@@ -234,7 +234,12 @@ void UsbIpDevices::refresh()
 #ifdef Q_OS_WIN32
     // Present == the installer created the service. Nothing to remember to flip: landing
     // the service is what turns the toggles live.
-    QSettings services(QStringLiteral("HKEY_LOCAL_MACHINE\\\\SYSTEM\\\\CurrentControlSet\\\\Services"),
+    // Deliberately single-escaped. Qt strips "HKEY_LOCAL_MACHINE" plus ONE backslash and
+    // hands the remainder straight to RegOpenKeyExW, so a doubled backslash leaves a leading
+    // backslash and the key never opens (ERROR_BAD_PATHNAME, 161). childGroups() then comes
+    // back empty and the toggles stay dead on a machine where the service is perfectly fine.
+    // Written the same way as every other registry read in this product.
+    QSettings services(QStringLiteral("HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services"),
                        QSettings::NativeFormat);
     m_CanShare = services.childGroups().contains(QLatin1String(kServiceNameWindows));
 #else
