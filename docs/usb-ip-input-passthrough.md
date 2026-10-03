@@ -110,7 +110,17 @@ relative path it occupies on the system* (`usr/libexec/…`), so placing it is a
 normally-installed ArtMoon resolves the bundled path to the real system path, which exists only once the helper
 is genuinely there. That relationship is what makes the app's "should I offer to set this up" answer honest.
 
-Setting it up is one administrator prompt: `pkexec install -m 0755 -o root -g root <bundled> <system>`.
+Setting it up is one administrator prompt: `pkexec install -m 0755 -o root -g root <staged> /usr/libexec/artmoon-input-service`.
+
+`<staged>` is deliberately not the copy inside the AppImage. An AppImage runs from a FUSE mount, and the AppImage
+runtime mounts it **without** `allow_other` or `allow_root` — verified on Niks-z13 on 2026-10-03, mount options
+`ro,nosuid,nodev,relatime,user_id=1000,group_id=1000`. Only the mounting user may traverse such a mount, and root is
+refused too, because `CAP_DAC_OVERRIDE` does not bypass the FUSE mount-owner check. Handing the in-mount path to an
+elevated `install` therefore fails with `cannot stat: Permission denied`. So the app copies the helper into a
+directory only that user can reach — 0700 under `$XDG_RUNTIME_DIR` — and the elevated step reads from there. No other
+principal can redirect what root reads; the user alone can, and they are the one approving the prompt. Hardening that
+last step means handing the payload to pkexec over stdin rather than as a path, which needs evidence that pkexec
+carries stdin through — not established, so not what ships.
 
 `install(1)` specifically, not a shell command and not a script carried in the bundle. Whatever is handed to
 pkexec runs as root, so it must be a system binary that takes two paths and does one thing — an approver can see

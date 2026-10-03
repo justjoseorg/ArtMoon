@@ -2,13 +2,16 @@
 #include "usbipdevicelist.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QLocalSocket>
 #include <QProcess>
 #include <QQmlEngine>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QTemporaryDir>
 #include <QVariantMap>
 
 #include "settings/streamingpreferences.h"
@@ -38,6 +41,26 @@ QString usbipdProgram()
 #else
     return QStandardPaths::findExecutable(QStringLiteral("usbip"));
 #endif
+}
+
+/*
+ * The sha256 of a file, or an empty string if it cannot be read.
+ *
+ * Used to decide whether an install actually happened. Existence alone is not enough: a
+ * privileged copy that read nothing still leaves a file at the destination, and presence is
+ * what turns the toggles live — so a helper that cannot bind would look installed.
+ */
+QString fileSha256(const QString &path)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        return QString();
+    }
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!hash.addData(&f)) {
+        return QString();
+    }
+    return QString::fromLatin1(hash.result().toHex());
 }
 
 /*
@@ -173,7 +196,14 @@ void UsbIpDevices::refresh()
                        QSettings::NativeFormat);
     m_CanShare = services.childGroups().contains(QLatin1String(kServiceNameWindows));
 #else
-    m_CanShare = QFileInfo::exists(QLatin1String(kHelperPathLinux));
+    /*
+     * Ownership is part of presence. A helper that is not root-owned cannot bind anything, so
+     * counting it as present would light the toggles against something that refuses every
+     * request. After a privileged install it is also the property that says the install really
+     * happened as intended rather than leaving a file behind.
+     */
+    const QFileInfo systemHelper{QLatin1String(kHelperPathLinux)};
+    m_CanShare = systemHelper.exists() && systemHelper.ownerId() == 0;
 #endif
 
     // ── Is there something we could do about it? ──────────────────────────────
@@ -342,28 +372,81 @@ void UsbIpDevices::installInputService()
      * a user-writable mount would be authorising that script's PATH — and anything able to
      * write to that path could then have a program of its own choosing run as root.
      *
+     * The payload is staged first, and that is a requirement rather than a preference. An
+     * AppImage runs from a FUSE mount, and the runtime mounts it WITHOUT allow_other or
+     * allow_root, so only the mounting user may traverse it — root is refused too, because
+     * CAP_DAC_OVERRIDE does not bypass the FUSE mount-owner check. Handing pkexec the in-mount
+     * path fails with "cannot stat: Permission denied" (Niks-z13 2026-10-03, options
+     * ro,nosuid,nodev,relatime,user_id=1000,group_id=1000). So the copy happens here first,
+     * into a directory only this user can reach: 0700 under XDG_RUNTIME_DIR, else a 0700 temp
+     * dir. No other principal can redirect what root then reads; the user alone can, and the
+     * user is the one approving the prompt. Handing the payload to pkexec over stdin instead
+     * of as a path would harden that last step, but it depends on pkexec carrying stdin
+     * through, which is not established — so it is not what ships.
+     *
      * install applies mode and owner itself, so the helper never exists at its system path
      * with the wrong ownership, not even briefly.
      */
-    QProcess proc;
-    proc.start(QStringLiteral("pkexec"),
-               { QStringLiteral("install"),
-                 QStringLiteral("-m"), QStringLiteral("0755"),
-                 QStringLiteral("-o"), QStringLiteral("root"),
-                 QStringLiteral("-g"), QStringLiteral("root"),
-                 bundledHelperPath(), QLatin1String(kHelperPathLinux) });
-    proc.waitForFinished(120000);
+    QTemporaryDir staging{
+        qEnvironmentVariable("XDG_RUNTIME_DIR").isEmpty()
+            ? QStringLiteral("/tmp/artmoon-install-XXXXXX")
+            : qEnvironmentVariable("XDG_RUNTIME_DIR") + QStringLiteral("/artmoon-install-XXXXXX")};
 
-    const int code = proc.exitCode();
-    if (code == 126 || code == 127) {
-        // pkexec's own meanings: the prompt was dismissed, or this user may not authenticate.
-        note = tr("Not set up — the password prompt was closed.");
+    const QString staged = staging.filePath(QStringLiteral("artmoon-input-service"));
+    const QString bundled = bundledHelperPath();
+
+    bool stagedOk = false;
+    if (staging.isValid()) {
+        QFile in(bundled);
+        QFile out(staged);
+        if (in.open(QIODevice::ReadOnly) && out.open(QIODevice::WriteOnly)) {
+            const qint64 written = out.write(in.readAll());
+            out.close();
+            QFile::setPermissions(staged, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+            stagedOk = written > 0 && QFileInfo(staged).size() == QFileInfo(bundled).size();
+        }
     }
-    else if (code != 0) {
-        QString err = QString::fromLocal8Bit(proc.readAllStandardError()).trimmed();
-        note = err.isEmpty()
-            ? tr("Not set up — the install did not complete.")
-            : err.split(QLatin1Char('\n')).first().trimmed();
+
+    if (!stagedOk) {
+        note = tr("Not set up — the input service could not be prepared from this build.");
+    }
+    else {
+        QProcess proc;
+        proc.start(QStringLiteral("pkexec"),
+                   { QStringLiteral("install"),
+                     QStringLiteral("-m"), QStringLiteral("0755"),
+                     QStringLiteral("-o"), QStringLiteral("root"),
+                     QStringLiteral("-g"), QStringLiteral("root"),
+                     staged, QLatin1String(kHelperPathLinux) });
+        proc.waitForFinished(120000);
+
+        const int code = proc.exitCode();
+        if (code == 126 || code == 127) {
+            // pkexec's own meanings: the prompt was dismissed, or this user may not authenticate.
+            note = tr("Not set up — the password prompt was closed.");
+        }
+        else if (code != 0) {
+            QString err = QString::fromLocal8Bit(proc.readAllStandardError()).trimmed();
+            note = err.isEmpty()
+                ? tr("Not set up — the install did not complete.")
+                : err.split(QLatin1Char('\n')).first().trimmed();
+        }
+        else {
+            // Decide from the artifact, never from the exit code. A copy that read nothing
+            // still leaves a file at the destination, and it is presence that turns the
+            // toggles live — so a helper that cannot bind anything would look installed.
+            const QString want = fileSha256(bundled);
+            const QFileInfo installed{QLatin1String(kHelperPathLinux)};
+            if (!installed.exists()) {
+                note = tr("Not set up — the install reported success but nothing landed.");
+            }
+            else if (!want.isEmpty() && fileSha256(QLatin1String(kHelperPathLinux)) != want) {
+                note = tr("Not set up — the installed service does not match this build.");
+            }
+            else if (installed.ownerId() != 0) {
+                note = tr("Not set up — the installed service is not owned by root.");
+            }
+        }
     }
 #endif
 
