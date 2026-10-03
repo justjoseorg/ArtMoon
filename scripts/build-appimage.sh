@@ -118,6 +118,28 @@ for BAD in '9-3; rm -rf /' '../9-3' 'a-3' '' ; do
 done
 echo "Input service built, static, and refusing what it must refuse"
 
+# The polkit action that lets the app reach the helper without a password prompt on every
+# toggle. It goes into the image at the same relative path it occupies on the system, for the
+# same reason the helper does: placing it is a copy, not a remapping. It is inert until root
+# puts it there, so carrying it is not itself a grant.
+mkdir -p "$DEPLOY_FOLDER/usr/share/polkit-1/actions"
+cp "$SOURCE_ROOT/service/org.artmoon.input-service.policy" \
+   "$DEPLOY_FOLDER/usr/share/polkit-1/actions/org.artmoon.input-service.policy" \
+   || fail "Failed to bundle the input service polkit action"
+chmod 644 "$DEPLOY_FOLDER/usr/share/polkit-1/actions/org.artmoon.input-service.policy"
+# The action grants privilege by naming ONE program. If that path and the path the helper is
+# actually installed to ever drift apart, pkexec quietly falls back to the generic exec action
+# and the user gets a password prompt on every toggle — a bug nobody would report as a bug.
+# Check the pair here, and check the file is XML at all: polkit ignores a malformed action
+# file in silence, which is the same failure with no clue attached.
+grep -q 'exec.path">/usr/libexec/artmoon-input-service<' \
+    "$DEPLOY_FOLDER/usr/share/polkit-1/actions/org.artmoon.input-service.policy" \
+    || fail "The polkit action does not name /usr/libexec/artmoon-input-service"
+python3 -c "import xml.etree.ElementTree as E,sys; E.parse(sys.argv[1])" \
+    "$DEPLOY_FOLDER/usr/share/polkit-1/actions/org.artmoon.input-service.policy" \
+    || fail "The polkit action is not valid XML - polkit would ignore it and prompt every time"
+echo "Input service polkit action bundled and cross-checked against the helper path"
+
 # Pre-seed the QML modules the app imports but linuxdeploy-plugin-qt's bundle
 # step has historically missed when the host's Qt install lacks them (the 1.0.0
 # AppImage shipped without QtQuick/Shapes and bounced on launch on every

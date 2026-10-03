@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+
+  <!--
+    The Linux half of "the app never binds; the service does".
+
+    The helper at /usr/libexec/artmoon-input-service refuses to act without administrator
+    rights, and on Linux the app has no way to hand it privilege except through pkexec. This
+    action is what makes that pkexec call silent: `allow_active` grants it to the local active
+    session with no authentication, so the one approval the user gives is the one that placed
+    this file and the helper — not one per device toggle.
+
+    Placing this file is what requires the password. That is the moment to be thinking about
+    what it grants: the active session may run exactly one program as root, and pkexec binds
+    this action to it by the exec.path annotation below, so it cannot be pointed anywhere else.
+
+    Why this is safe to grant, given the program takes input from an unprivileged process:
+      - It validates every busid as a strict shape AND checks the device exists on this
+        machine via /sys, so it will only ever act on hardware that is physically present.
+        It does not trust the list its caller sends.
+      - It keeps no state. It reconciles against the kernel's own view and forgets.
+      - It is statically linked, so there is no library for anything to inject into.
+      - It sets its own PATH before running anything, so `usbip` and `modprobe` cannot be
+        redirected by the environment of whatever started it.
+
+    Deliberately NOT `allow_any` or `allow_inactive`: a remote session, or a session nobody
+    is sitting at, cannot use this. That distinction is the reason this is done with polkit
+    rather than by making the helper setuid — which is also ruled out because the helper
+    resolves `usbip` through PATH, and a setuid binary doing that is a root hole by design.
+  -->
+  <action id="org.artmoon.input-service.reconcile">
+    <description>Share USB devices over the network</description>
+    <message>Authentication is required to share USB devices</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/artmoon-input-service</annotate>
+  </action>
+
+</policyconfig>

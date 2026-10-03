@@ -133,6 +133,15 @@ jobs:
             echo "accepted a missing verb"; exit 1
           fi
           echo "input service guards hold"
+          # The polkit action is the difference between a silent toggle and a password prompt
+          # on every one. Polkit ignores a malformed action file *silently* and falls back to
+          # the generic exec action, so a typo here fails nothing — it only makes the feature
+          # annoying, which is the hardest kind of bug to notice. Parse it, and check it still
+          # names the one program it authorises.
+          python3 -c "import xml.etree.ElementTree as E; E.parse('service/org.artmoon.input-service.policy')"
+          grep -q 'exec.path">/usr/libexec/artmoon-input-service<' \
+            service/org.artmoon.input-service.policy
+          echo "polkit action parses and names the helper"
 
       - name: Setup environment
         run: |

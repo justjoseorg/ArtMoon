@@ -125,6 +125,7 @@ private:
     QStringList wantedBusids() const;
     void storeWantedBusids(const QStringList &busids);
     static QString bundledHelperPath();
+    static QString bundledPolicyPath();
 
     QVariantList m_Devices;
     bool m_Available = false;

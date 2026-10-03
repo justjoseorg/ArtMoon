@@ -129,6 +129,34 @@ path*, and anything able to write there could then get a program of its choosing
 applies mode and owner itself, so the helper never exists at its system path with the wrong ownership, not even
 briefly.
 
+**How the desired set reaches the helper — and why Linux needs no daemon:**
+
+The helper refuses to act without administrator rights and the app is unprivileged, so every reconcile has to
+arrive through `pkexec`:
+
+    pkexec /usr/libexec/artmoon-input-service reconcile --want <busid>... --local <busid>...
+
+That needs no password prompt because of a second file placed by the same one-time setup: the polkit action
+`org.artmoon.input-service.reconcile` (`service/org.artmoon.input-service.policy`), which grants it to the
+**active local session** with no authentication. So the single approval the user gives is the one that placed the
+helper and the policy — not one per toggle. The action is bound to that one program by its
+`org.freedesktop.policykit.exec.path` annotation, so it cannot be aimed anywhere else, and `allow_any` and
+`allow_inactive` are both `no`: a remote session, or one nobody is sitting at, cannot use it.
+
+This is why Windows and Linux differ in shape and not in intent:
+
+- **Windows needed a pipe.** A running service refuses `sc start` (error 1056), so start arguments can only ever
+  deliver the *first* desired set. Hence a channel the app can send a changing set down.
+- **Linux needs no channel.** `pkexec` carries a fresh argument list on every call, which is exactly what
+  `sc start` could not do. A daemon here would be a moving part solving a problem this platform does not have.
+
+**Setuid is ruled out, and the reason is one line of the helper.** It runs `usbip` by bare name through `execvp`,
+and `execvp` resolves a bare name through `PATH`. As a setuid-root binary that is a root hole by construction: a
+program called `usbip` in a directory earlier in `PATH` runs as root. The helper now sets its own `PATH` before it
+can spawn anything, so it no longer depends on its caller for that — but setuid would still make the correctness of
+this one program the only thing between a local user and root. Polkit grants the same privilege with the system's
+own session scoping, an audit trail, and no setuid binary on the machine.
+
 ### Windows
 
 The installer creates the service (`ArtMoonInputService`) — the same shape as the service `usbipd-win` installs
