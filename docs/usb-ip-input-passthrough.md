@@ -67,9 +67,14 @@ anything.
 
 All four orders are supported upstream. Only Windows→Windows is proven on these machines so far.
 
+**Proven in the wild, 2026-10-02:** Nik attached the mini PC's keyboard and mouse to the gaming PC and played
+**Aion 2** — a game that drops injected input — and it registered his inputs normally once the devices were
+passed over. That is the whole justification for this feature, demonstrated end to end before any code was
+written.
+
 | exporter | importer | upstream? | evidence |
 |---|---|---|---|
-| Windows | Windows | ✅ proven | `usbipd-win` + `usbip-win2`, attached 2026-10-03 |
+| Windows | Windows | ✅ proven in use | `usbipd-win` + `usbip-win2`; Aion 2 accepted the real HID, 2026-10-02 |
 | Windows | Linux | ✅ documented | usbipd-win README: `usbip attach --remote=<HOST> --busid=<BUSID>` |
 | Windows | WSL 2 | ✅ documented | `usbipd attach --wsl --busid=…`, no admin required |
 | Linux | Windows | ✅ documented | usbip-win2 README: kernels 4.19–7.0, server protocol 1.1.1 |
