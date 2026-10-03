@@ -17,6 +17,7 @@ on:
       - 'app/**'
       - 'scripts/**'
       - 'libs/**'
+      - 'service/**'
       - 'moonlight-qt.pro'
       - '.github/workflows/build-linux.yml'
 
@@ -101,6 +102,37 @@ jobs:
         with:
           submodules: 'recursive'
           fetch-depth: 1
+
+      - name: Build the input service and prove its guards
+        run: |
+          # The helper in service/ is the privileged piece that makes a share toggle able to
+          # act, so it is held to a higher bar than "it compiles": the checks below RUN it,
+          # and every one of them is a refusal. A refusal that quietly stopped happening
+          # would not fail anything later — it would be a privilege-escalation hole, because
+          # this program runs as root and its arguments come from an unprivileged process.
+          #
+          # Placed before the dependency builds on purpose: this takes seconds, and a broken
+          # guard should fail the run now rather than an hour from now.
+          g++ -std=c++17 -O2 -Wall -Wextra \
+            service/artmoon-input-service.cpp -o /tmp/artmoon-input-service
+          /tmp/artmoon-input-service status
+          # Malformed and hostile busids — including shell metacharacters — must all be
+          # refused with a non-zero exit. Nothing here may ever reach usbip.
+          for bad in '9-3; rm -rf /' '9-3$(id)' '9-3`id`' '../9-3' '9-3/../1' 'a-3' '9-3.' '' ; do
+            if /tmp/artmoon-input-service reconcile --want "$bad" --dry-run >/dev/null 2>&1; then
+              echo "guard accepted a bad busid: '$bad'"; exit 1
+            fi
+          done
+          # A well-formed busid for a device that is not plugged into this machine is
+          # refused as well: the helper can only ever act on hardware that is present.
+          if /tmp/artmoon-input-service reconcile --want 99-99 --dry-run >/dev/null 2>&1; then
+            echo "guard accepted a device that is not present"; exit 1
+          fi
+          # A missing verb is a usage error, not a silent no-op.
+          if /tmp/artmoon-input-service >/dev/null 2>&1; then
+            echo "accepted a missing verb"; exit 1
+          fi
+          echo "input service guards hold"
 
       - name: Setup environment
         run: |

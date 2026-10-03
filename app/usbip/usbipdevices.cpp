@@ -208,17 +208,31 @@ void UsbIpDevices::setWanted(const QString &busid, bool wanted)
 
     // Reconcile with the service. Absent service == the intent is still recorded, and
     // `shared` is left alone, so the tab shows "wanted, not shared" instead of pretending.
+    //
+    // The desired set is handed over explicitly rather than read from a file: the helper runs
+    // as root, so it must never be pointed at a path an unprivileged process can rewrite.
     if (m_CanShare) {
         QProcess proc;
 #ifdef Q_OS_WIN32
+        // Windows gets its work over a local channel, not start arguments: `sc start` refuses
+        // a service that is already running (error 1056), so it cannot carry a new desired set.
+        // Until that channel lands the service reconciles against the intent it can see, and
+        // the app's own enumeration stays the authority on what is actually shared.
         proc.start(QStringLiteral("sc"),
                    { QStringLiteral("start"), QLatin1String(kServiceNameWindows),
                      QStringLiteral("reconcile") });
-        proc.waitForFinished(4000);
 #else
-        proc.start(QLatin1String(kHelperPathLinux), { QStringLiteral("reconcile") });
-        proc.waitForFinished(4000);
+        QStringList helperArgs{ QStringLiteral("reconcile") };
+        for (const auto &busid : busids) {
+            helperArgs << QStringLiteral("--want") << busid;
+        }
+        for (const auto &entry : m_Devices) {
+            helperArgs << QStringLiteral("--local")
+                       << entry.toMap().value(QStringLiteral("busid")).toString();
+        }
+        proc.start(QLatin1String(kHelperPathLinux), helperArgs);
 #endif
+        proc.waitForFinished(4000);
     }
 
     rebuild();
