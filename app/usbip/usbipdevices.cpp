@@ -289,8 +289,19 @@ void UsbIpDevices::refresh()
                  "input service, which does that for you, but it is not set up on this PC yet.");
     }
     else {
+#ifdef Q_OS_WIN32
+        // Windows: the installer places this service, so "not in this build yet" would be a lie —
+        // the build carries it, and has since the service landed. What is missing is the service
+        // on THIS machine, and the remedy is the installer. The Linux sentence below describes a
+        // build that genuinely lacks the bundled helper, and would send a Windows user hunting a
+        // build flag that does not exist.
+        m_CanShareReason = tr("Sharing a device needs administrator rights, which the ArtMoon input "
+             "service does on your behalf. The service is not set up on this PC — re-running the "
+             "ArtMoon installer will place it.");
+#else
         m_CanShareReason = tr("Sharing a device needs administrator rights, which the ArtMoon input service "
              "does on your behalf. It is not installed in this build yet.");
+#endif
     }
 
     rebuild();
