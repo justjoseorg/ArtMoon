@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QRect>
 #include <QQmlEngine>
+#include <QStringList>
 
 class StreamingPreferences : public QObject
 {
@@ -310,6 +311,15 @@ public:
     Q_PROPERTY(InputPrompts inputPrompts MEMBER inputPrompts NOTIFY inputPromptsChanged)
     Q_PROPERTY(ClockFormat clockFormat MEMBER clockFormat NOTIFY clockFormatChanged)
     Q_PROPERTY(DateFormat dateFormat MEMBER dateFormat NOTIFY dateFormatChanged)
+    /*
+     * USB devices this machine's owner has asked to offer to an importer, by busid.
+     *
+     * This is the user's INTENT, and it is deliberately not the same thing as "bound". The
+     * bind needs administrator rights, so the privileged input service performs it; storing
+     * the intent here means the tab can show "asked for, not shared yet" honestly, and the
+     * choices are already recorded the first time the service runs.
+     */
+    Q_PROPERTY(QStringList usbIpWantedBusids MEMBER usbIpWantedBusids NOTIFY usbIpWantedBusidsChanged)
     // Directly accessible members for preferences
     int width;
     int height;
@@ -389,6 +399,9 @@ public:
     ClockFormat clockFormat;
     DateFormat dateFormat;
 
+    // Busids the user has asked to share. See the Q_PROPERTY note above.
+    QStringList usbIpWantedBusids;
+
 signals:
     void displayModeChanged();
     void customResolutionChanged();
@@ -441,6 +454,7 @@ signals:
     void inputPromptsChanged();
     void clockFormatChanged();
     void dateFormatChanged();
+    void usbIpWantedBusidsChanged();
 private:
     explicit StreamingPreferences(QQmlEngine *qmlEngine);
 

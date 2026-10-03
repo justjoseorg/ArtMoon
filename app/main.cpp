@@ -53,6 +53,7 @@
 #include "gui/appmodel.h"
 #include "backend/computermanager.h"
 #include "backend/systemproperties.h"
+#include "usbip/usbipdevices.h"
 #include "backend/appupdate.h"
 #include "streaming/session.h"
 #include "settings/streamingpreferences.h"
@@ -1097,6 +1098,13 @@ int main(int argc, char *argv[])
                                          [](QQmlEngine* qmlEngine, QJSEngine*) -> QObject* {
                                              return WindowMove::get(qmlEngine);
                                          });
+    // Exporter side of USB/IP input passthrough: the devices plugged into THIS machine and
+    // whether each is offered to an importer. Read by the Input tab in SettingsScreen.qml.
+    qmlRegisterSingletonType<UsbIpDevices>("UsbIpDevices", 1, 0,
+                                           "UsbIpDevices",
+                                           [](QQmlEngine* qmlEngine, QJSEngine*) -> QObject* {
+                                               return UsbIpDevices::get(qmlEngine);
+                                           });
 
     // Create the identity manager on the main thread
     IdentityManager::get();

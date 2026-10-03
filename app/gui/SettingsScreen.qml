@@ -10,6 +10,7 @@ import SdlGamepadKeyNavigation 1.0
 import SystemProperties 1.0
 import AppUpdate 1.0
 import ShortcutManager 1.0
+import UsbIpDevices 1.0
 import AppUpdate 1.0
 
 // SettingsScreen — Xbox-style flat settings panel.
@@ -122,6 +123,33 @@ FocusScope {
     property string _linkDetail: qsTr("Checking this device's connection…")
     property string _linkPill:   qsTr("Checking…")
     property bool   _linkUsable: false
+
+    /*
+     * The USB devices block's one notice line, and its glyph.
+     *
+     * Computed here rather than inside the block because three different reasons can stop
+     * that block acting — no USB/IP on this PC, nothing plugged in, and no administrator
+     * rights — and a block that works out its own reason is a block that can disagree with
+     * itself about which one applies. The notice row is the existing grammar for "these
+     * rows cannot act, and here is why", already used by the stream-tweak and host-profile
+     * blocks; this is the same sentence with a third reason.
+     */
+    readonly property string _usbNotice: {
+        if (!UsbIpDevices.available)
+            return UsbIpDevices.unavailableReason
+        if (UsbIpDevices.devices.length === 0)
+            return qsTr("No USB devices are plugged into this PC.")
+        if (!UsbIpDevices.canShare)
+            return UsbIpDevices.canShareReason
+        return ""
+    }
+    readonly property string _usbNoticeGlyph: {
+        if (!UsbIpDevices.available)
+            return "\uD83D\uDD0C"     // 🔌 this PC cannot do it
+        if (UsbIpDevices.devices.length === 0)
+            return "\uD83D\uDD0D"     // 🔍 nothing to show
+        return "\uD83D\uDD11"         // 🔑 needs administrator rights
+    }
 
     function _refreshLocalLink() {
         var info = SystemProperties.localLinkInfo()
@@ -593,6 +621,44 @@ FocusScope {
         }
         RowSeparator {
             anchors.bottom: parent.bottom
+        }
+    }
+
+    // Notice at the top of the USB devices block. Same grammar as the two above — the rows
+    // below cannot act, and this says why — with its own glyph so the three reasons are
+    // never mistaken for each other: 🔌 this PC cannot do it, 🔍 nothing to show,
+    // 🔑 it needs administrator rights.
+    component UsbShareNotice: Item {
+        id: usbNotice
+        property string notice: ""
+        property string glyph: "\uD83D\uDD11"
+        width: parent ? parent.width : 0
+        visible: notice.length > 0
+        // Two lines' worth: these reasons name a cause and what can be done about it, and
+        // a one-line height would clip the half that says what to do.
+        height: visible ? settingsScreen._rowHeightTall : 0
+        Row {
+            anchors.left: parent.left; anchors.leftMargin: settingsScreen._px(16)
+            anchors.right: parent.right; anchors.rightMargin: settingsScreen._px(16)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: settingsScreen._px(8)
+            Label {
+                text: usbNotice.glyph
+                font.pixelSize: settingsScreen._px(Theme.fontSmall)
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            Label {
+                width: parent.width - settingsScreen._px(28)
+                anchors.verticalCenter: parent.verticalCenter
+                text: usbNotice.notice
+                font.family: Theme.family; font.pixelSize: settingsScreen._px(Theme.fontSmall)
+                color: settingsScreen._textDim
+                wrapMode: Text.WordWrap
+            }
+        }
+        RowSeparator {
+            anchors.bottom: parent.bottom
+            visible: usbNotice.visible
         }
     }
 
@@ -2425,6 +2491,120 @@ FocusScope {
                                 anchors.verticalCenter: parent.verticalCenter
                                 checked: StreamingPreferences.reverseScrollDirection
                                 onToggled: function(v) { StreamingPreferences.reverseScrollDirection = v; StreamingPreferences.save() }
+                            }
+                        }
+                    }
+                }
+
+                // ── Section: USB DEVICES ──────────────────────────────────────
+                // Exporter side of USB/IP input passthrough: the devices plugged into THIS
+                // machine, and which of them are offered to an importer.
+                //
+                // ⚠️ Terminology is locked (Nik, 2026-10-03) — never say host, client or
+                // server on this screen. In USB/IP the "host" is the DEVICE side; in
+                // streaming the host is the machine serving the VIDEO. On our two machines
+                // that is the opposite PC, so the bare words invert the whole design.
+                // ArtMoon, ArtLight, exporter, importer. See
+                // docs/usb-ip-input-passthrough.md.
+                Label {
+                    text: qsTr("USB devices on this PC")
+                    font.family: Theme.family
+                    font.pixelSize: settingsScreen._px(Theme.fontSmall)
+                    font.bold: true
+                    font.letterSpacing: 1.4
+                    font.capitalization: Font.AllUppercase
+                    color: settingsScreen._textMut
+                    leftPadding: settingsScreen._px(14)
+                }
+
+                Rectangle {
+                    width: parent.width
+                    color: settingsScreen._bg2
+                    radius: settingsScreen._px(8)
+                    border.color: settingsScreen._border
+                    border.width: 1
+                    implicitHeight: usbCol.implicitHeight + settingsScreen._px(8)
+
+                    Column {
+                        id: usbCol
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.topMargin: settingsScreen._px(4)
+                        spacing: 0
+
+                        UsbShareNotice {
+                            notice: settingsScreen._usbNotice
+                            glyph: settingsScreen._usbNoticeGlyph
+                        }
+
+                        // One row per device. The list comes from the local enumeration, so
+                        // this delegate is built from real hardware — on a PC with none of
+                        // it, the block above carries the reason and this draws nothing.
+                        Repeater {
+                            model: UsbIpDevices.devices
+
+                            delegate: Column {
+                                width: usbCol.width
+                                spacing: 0
+
+                                Item {
+                                    width: parent.width
+                                    height: settingsScreen._rowHeightTall
+
+                                    Column {
+                                        anchors.left: parent.left
+                                        anchors.leftMargin: settingsScreen._px(16)
+                                        anchors.right: usbSwitch.left
+                                        anchors.rightMargin: settingsScreen._px(12)
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        spacing: settingsScreen._px(3)
+
+                                        Label {
+                                            width: parent.width
+                                            text: modelData.description
+                                            elide: Text.ElideRight
+                                            font.family: Theme.family
+                                            font.pixelSize: settingsScreen._px(Theme.fontBody)
+                                            font.bold: true
+                                            color: settingsScreen._text
+                                        }
+                                        // The state is shown, not implied. `wanted` and
+                                        // `shared` are different questions — a device can be
+                                        // asked for and not yet shared — so the line names
+                                        // which of the two the row is currently in.
+                                        Label {
+                                            text: modelData.vidPid + "  ·  " + modelData.busid
+                                                  + "  ·  " + (modelData.shared
+                                                               ? qsTr("Shared")
+                                                               : (modelData.wanted
+                                                                  ? qsTr("Not shared yet")
+                                                                  : qsTr("Not shared")))
+                                            font.family: Theme.family
+                                            font.pixelSize: settingsScreen._px(Theme.fontSmall)
+                                            color: settingsScreen._textDim
+                                        }
+                                    }
+
+                                    OnOffSelector {
+                                        id: usbSwitch
+                                        anchors.right: parent.right
+                                        anchors.rightMargin: settingsScreen._px(16)
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        // Greyed, with the reason on the notice row above,
+                                        // whenever the privileged service is not installed.
+                                        // A switch that looked live and silently did nothing
+                                        // would be worse than one that says why it cannot.
+                                        enabled: UsbIpDevices.canShare
+                                        opacity: enabled ? 1.0 : 0.4
+                                        checked: modelData.wanted
+                                        onToggled: function(v) { UsbIpDevices.setWanted(modelData.busid, v) }
+                                    }
+                                }
+
+                                RowSeparator {
+                                    visible: index < UsbIpDevices.devices.length - 1
+                                }
                             }
                         }
                     }

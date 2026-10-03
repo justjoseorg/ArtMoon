@@ -229,6 +229,8 @@ SOURCES += \
     backend/appupdate.cpp \
     backend/networkbuffers.cpp \
     diagnostics/gputrace.cpp \
+    usbip/usbipdevicelist.cpp \
+    usbip/usbipdevices.cpp \
     wm.cpp
 
 HEADERS += \
@@ -298,7 +300,9 @@ HEADERS += \
     diagnostics/gputrace.h \
     streaming/video/pyrowave/pyrowavebitrate.h \
     streaming/video/pyrowave/pyrowaveprotocol.h \
-    backend/appupdate.h
+    backend/appupdate.h \
+    usbip/usbipdevicelist.h \
+    usbip/usbipdevices.h
 
 # Platform-specific renderers and decoders
 ffmpeg {
