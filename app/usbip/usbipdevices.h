@@ -182,6 +182,18 @@ private:
     /* Why a toggle did not take, as far as we can actually tell. See the .cpp. */
     QString describeToggleFailure() const;
 
+    /*
+     * Is the helper on this PC the one this build carries?
+     *
+     * Presence is not currency: an install from an older build satisfies every other property
+     * canShare checks, so a fix could ship and never reach the machine. See the .cpp.
+     */
+    bool helperMatchesBundle();
+
+    /* Cached, because refresh() is on a timer and the answer only changes when we install. */
+    bool m_HelperMatchKnown = false;
+    bool m_HelperMatches = false;
+
     QVariantList m_Devices;
     bool m_Available = false;
     QString m_UnavailableReason;

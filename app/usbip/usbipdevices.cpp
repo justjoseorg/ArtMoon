@@ -231,6 +231,63 @@ QString UsbIpDevices::bundledHelperPath()
 #endif
 }
 
+namespace {
+QByteArray fileDigest(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return QByteArray();
+    }
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!hash.addData(&file)) {
+        return QByteArray();
+    }
+    return hash.result();
+}
+}
+
+/*
+ * Is the helper on this PC the one THIS build carries?
+ *
+ * Existing is not the same as current, and until now the app only ever asked the first question.
+ * Every property m_CanShare checked — present, root-owned, policy alongside it — an install from
+ * an older build satisfies perfectly. So a fix could ship, the AppImage could be updated, setup
+ * could report success, and the machine would keep running the old binary for good.
+ *
+ * Found the hard way on the z13: a new build carrying a corrected helper was staged, the helper
+ * was installed by hand from it, and the app went on reporting everything fine — because the
+ * file it would have placed and the file already there had the same name. The next build would
+ * have repeated it exactly, which is the only reason this is being fixed rather than worked
+ * around with another hand-copy.
+ *
+ * Compared by content. Not by timestamp — a file copied out of an archive carries whatever time
+ * the archive gave it, so mtime says nothing about which build it came from — and not by size,
+ * which is not a claim about behaviour.
+ *
+ * The answer is cached because refresh() runs on a timer and hashing a few megabytes every
+ * second to reach an answer that cannot change on its own would be work for nothing. The one
+ * thing that CAN change it is our own install, which clears the cache.
+ */
+bool UsbIpDevices::helperMatchesBundle()
+{
+    if (m_HelperMatchKnown) {
+        return m_HelperMatches;
+    }
+    m_HelperMatchKnown = true;
+    m_HelperMatches = false;
+#ifndef Q_OS_WIN32
+    const QString bundled = bundledHelperPath();
+    if (!QFileInfo::exists(bundled)) {
+        // Nothing carried to compare against. That is the other condition entirely, and
+        // m_CanInstallService reports it; answering here would only say it twice.
+        return false;
+    }
+    const QByteArray installed = fileDigest(QLatin1String(kHelperPathLinux));
+    m_HelperMatches = !installed.isEmpty() && installed == fileDigest(bundled);
+#endif
+    return m_HelperMatches;
+}
+
 /*
  * Where the polkit action sits in this build — the same relationship as the helper above, for
  * the same reason: the bundled tree mirrors the layout the installed tree has, so an installed
@@ -376,7 +433,8 @@ void UsbIpDevices::refresh()
      */
     const QFileInfo systemHelper{QLatin1String(kHelperPathLinux)};
     m_CanShare = systemHelper.exists() && systemHelper.ownerId() == 0
-                 && QFileInfo::exists(QLatin1String(kPolicyPathLinux));
+                 && QFileInfo::exists(QLatin1String(kPolicyPathLinux))
+                 && helperMatchesBundle();
 #endif
 
     // ── Is there something we could do about it? ──────────────────────────────
@@ -398,13 +456,19 @@ void UsbIpDevices::refresh()
         m_CanShareReason.clear();
     }
     else if (m_CanInstallService) {
-        // Name the remedy rather than the absence. The two files can part company — an install
-        // from a build that predates the permission rule, or a policy file removed by hand —
-        // and a single generic sentence would hide which half is actually missing.
+        // Name the remedy rather than the absence. The files can part company — an install from
+        // a build that predates the permission rule, a policy file removed by hand, or a helper
+        // left behind by an older build — and a single generic sentence would hide which half is
+        // actually wrong. "Not set up yet" is also a plain lie in the third case: it IS set up,
+        // and it works, and it is not the one this build carries.
         m_CanShareReason = QFileInfo::exists(QLatin1String(kHelperPathLinux))
-            ? tr("Sharing a device needs administrator rights, which ArtMoon's sharing helper "
-                 "does for you. The helper is on this PC but the rule that lets ArtMoon use it "
-                 "is not — running setup from this screen will finish it.")
+            ? (helperMatchesBundle()
+               ? tr("Sharing a device needs administrator rights, which ArtMoon's sharing helper "
+                    "does for you. The helper is on this PC but the rule that lets ArtMoon use it "
+                    "is not — running setup from this screen will finish it.")
+               : tr("Sharing a device needs administrator rights, which ArtMoon's sharing helper "
+                    "does for you. The helper on this PC is from another version of ArtMoon, and "
+                    "running setup from this screen will bring it up to date."))
             : tr("Sharing a device needs administrator rights, which ArtMoon's sharing helper "
                  "does for you. It is not set up on this PC yet — running setup from this screen "
                  "will do it.");
@@ -1175,6 +1239,12 @@ void UsbIpDevices::installInputService()
 
     m_InstallingService = false;
     emit installingServiceChanged();
+
+    // The cache was answering a question we have just changed the answer to. Without this,
+    // refresh() below would compare against the file that was there before the install and
+    // report the helper as stale with the new one sitting right in front of it.
+    m_HelperMatchKnown = false;
+    m_HelperMatches = false;
 
     // Re-read the world rather than trust the exit code. canShare is derived from the helper
     // actually being present, and that is the only thing that turns the toggles live.
