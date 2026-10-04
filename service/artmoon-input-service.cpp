@@ -575,7 +575,16 @@ bool ensureDaemon()
 // The ports a client connects TO when it is in a session with us. Taken from the product's own
 // address definitions rather than chosen here. The video and audio ports are UDP and so never
 // appear in the tables below; only the control and RTSP ports can match.
-const int kStreamingPorts[] = { 47984, 47989, 48002, 48010 };
+//
+// 47984 and 47989 are deliberately NOT in this list, even though they are the product's own HTTPS
+// and HTTP ports. ArtMoon connects to both of them to draw the host and its app list — a glance,
+// not a session — and it opens and closes that connection every couple of seconds for as long as
+// the app is open. Counting a glance here made it read as "a stream just started": the helper
+// bound the device, the poll closed, the next read released it, and the export flapped on and off
+// underneath the user. A real session is seen on 48010 — measured live on the exporter 2026-10-04,
+// where a stream held an ESTABLISHED connection to it — and 48002 is kept as the other
+// session-time control port. So: only ports a session holds belong here, never ports a poll opens.
+const int kStreamingPorts[] = { 48002, 48010 };
 
 // The marker our own rules carry, so a rule of the user's is never mistaken for one of ours.
 const char *kRuleMarker = "artmoon-device-sharing";
