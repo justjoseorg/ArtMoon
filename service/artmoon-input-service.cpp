@@ -17,6 +17,7 @@
 //
 //   artmoon-input-service reconcile [--want <busid>]... [--local <busid>]... [--dry-run]
 //   artmoon-input-service status                                                      
+//   artmoon-input-service install --from <staged-directory>                           
 //
 // `reconcile` binds every --want device, unbinds every --local device that is not wanted,
 // and prints one line per action. ArtMoon passes both lists explicitly and this helper
@@ -75,7 +76,9 @@
 #ifdef _WIN32
 #  include <windows.h>
 #else
+#  include <cerrno>
 #  include <dirent.h>
+#  include <fcntl.h>
 #  include <strings.h>
 #  include <sys/stat.h>
 #  include <sys/types.h>
@@ -114,6 +117,34 @@ const char *kUsbipdUnitName = "artmoon-usbipd";
 const char *kUsbipdUnitPath = "/etc/systemd/system/artmoon-usbipd.service";
 // The distro's, if this machine has the usbip package.
 const char *kDistroUsbipdUnit = "usbipd.service";
+
+/*
+ * Everything one-time setup places, and where it goes.
+ *
+ * This table lives here rather than being handed in by the app, and that is the whole point:
+ * the caller supplies only a directory to read from. A destination chosen by whoever invokes a
+ * program that runs as root is a destination an attacker gets to choose, and the app is the
+ * unprivileged side of this boundary. The app used to name each destination in its own pkexec
+ * command line; it no longer names one at all.
+ *
+ * The mode is applied explicitly rather than left to the source file's, so what lands is what
+ * this table says regardless of what the staging copy looks like by the time we read it.
+ */
+struct Placement {
+    const char *staged;
+    const char *destination;
+    unsigned mode;
+};
+
+const Placement kPlacements[] = {
+    { "artmoon-input-service",
+      "/usr/libexec/artmoon-input-service",                            0755 },
+    { "org.artmoon.input-service.policy",
+      "/usr/share/polkit-1/actions/org.artmoon.input-service.policy",  0644 },
+    { "usbip",           "/usr/libexec/artmoon-usbip/usbip",           0755 },
+    { "libusbip.so.0",   "/usr/libexec/artmoon-usbip/libusbip.so.0",   0644 },
+    { "usbipd",          "/usr/libexec/artmoon-usbip/usbipd",          0755 },
+};
 #endif
 
 // ── the plan ─────────────────────────────────────────────────────────────────────
@@ -744,6 +775,170 @@ void revokeStaleRules(const std::string &keep, Firewall firewall)
 
 } // namespace
 
+#ifndef _WIN32
+// ── one-time setup ───────────────────────────────────────────────────────────────
+//
+// Placing the files is a privileged operation, and this is why it lives here instead of in the
+// app. The app used to run one `pkexec install` per file: five files, five authorisations, five
+// password dialogs, for one logical act — "set this up". Measured on the exporter 2026-10-04:
+// exactly five prompts, and every one of them a generic exec authorisation, because `install`
+// is not this program and so the action below could not cover it.
+//
+// The fix is not to make the dialogs cheaper. It is to make there be one, by having the single
+// privileged call be this program, which already knows every destination and can place all
+// five in one run.
+//
+// This does mean the first run executes a staged copy, from a directory the calling user owns,
+// as root. That is the same authority the current design already grants one step later: what
+// gets installed is a binary the permission rule then lets run as root *silently*, for the rest
+// of the machine's life. The user is approving their own payload either way — the difference is
+// that now they approve it once, and can see that the thing running is the thing being installed.
+
+// Directories we will read a payload from. The app stages into a 0700 directory it creates under
+// XDG_RUNTIME_DIR, or under /tmp when that is unset. Anything else is refused rather than
+// trusted — and the ownership check is what stops one user naming another user's directory.
+bool stagingDirectoryIsOurs(const std::string &dir)
+{
+    if (dir.empty() || dir[0] != '/') return false;
+    if (dir.find("..") != std::string::npos) return false;
+
+    const std::string leaf = dir.substr(dir.find_last_of('/') + 1);
+    const std::string prefix = "artmoon-install-";
+    if (leaf.size() < prefix.size() || leaf.compare(0, prefix.size(), prefix) != 0) return false;
+
+    struct stat st {};
+    if (stat(dir.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) return false;
+    // getuid(), not geteuid(): under pkexec the real uid is the person who approved the prompt,
+    // and it is their directory this must be.
+    return st.st_uid == getuid();
+}
+
+bool makeParentDirectories(const std::string &path)
+{
+    std::string sofar;
+    size_t pos = path.find('/');
+    while (pos != std::string::npos && pos + 1 < path.size()) {
+        pos = path.find('/', pos + 1);
+        if (pos == std::string::npos) break;
+        sofar = path.substr(0, pos);
+        if (sofar.empty()) continue;
+
+        struct stat st {};
+        if (stat(sofar.c_str(), &st) == 0) {
+            if (!S_ISDIR(st.st_mode)) return false;
+            continue;
+        }
+        if (mkdir(sofar.c_str(), 0755) != 0 && errno != EEXIST) return false;
+        if (chown(sofar.c_str(), 0, 0) != 0) return false;
+    }
+    return true;
+}
+
+// Copies one staged file into place.
+//
+// Written beside the destination and renamed over it, so the file never exists at its system
+// path with the wrong content, mode or owner — not even for an instant. That property was
+// claimed by the app's comment when it shelled out to install(1); doing the copy here had to
+// keep it, and install(1) is not available to us now that we do not spawn one.
+bool placeFile(const std::string &from, const std::string &to, unsigned mode)
+{
+    const int in = open(from.c_str(), O_RDONLY | O_CLOEXEC);
+    if (in < 0) {
+        std::cerr << "artmoon-input-service: cannot read " << from << ": "
+                  << std::strerror(errno) << "\n";
+        return false;
+    }
+
+    struct stat src {};
+    if (fstat(in, &src) != 0 || !S_ISREG(src.st_mode) || src.st_size == 0) {
+        std::cerr << "artmoon-input-service: " << from << " is not a usable file\n";
+        close(in);
+        return false;
+    }
+
+    const std::string temp = to + ".artmoon-new";
+    const int out = open(temp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, mode);
+    if (out < 0) {
+        std::cerr << "artmoon-input-service: cannot write " << temp << ": "
+                  << std::strerror(errno) << "\n";
+        close(in);
+        return false;
+    }
+
+    bool ok = true;
+    char buffer[65536];
+    for (;;) {
+        const ssize_t got = read(in, buffer, sizeof(buffer));
+        if (got == 0) break;
+        if (got < 0) { ok = false; break; }
+
+        ssize_t written = 0;
+        while (written < got) {
+            const ssize_t put = write(out, buffer + written, static_cast<size_t>(got - written));
+            if (put <= 0) { ok = false; break; }
+            written += put;
+        }
+        if (!ok) break;
+    }
+    close(in);
+
+    // Explicit, and after the write: neither the umask nor the staging copy's own permissions
+    // get a say in what lands.
+    if (ok) ok = fchmod(out, static_cast<mode_t>(mode)) == 0;
+    if (ok) ok = fchown(out, 0, 0) == 0;
+    if (ok) ok = fsync(out) == 0;
+    close(out);
+
+    if (!ok) {
+        std::cerr << "artmoon-input-service: could not write " << to << ": "
+                  << std::strerror(errno) << "\n";
+        unlink(temp.c_str());
+        return false;
+    }
+    if (rename(temp.c_str(), to.c_str()) != 0) {
+        std::cerr << "artmoon-input-service: could not place " << to << ": "
+                  << std::strerror(errno) << "\n";
+        unlink(temp.c_str());
+        return false;
+    }
+    return true;
+}
+
+int installFrom(const std::string &dir)
+{
+    if (!stagingDirectoryIsOurs(dir)) {
+        std::cerr << "artmoon-input-service: refusing to install from '" << dir
+                  << "' — that is not a directory this app staged\n";
+        return 2;
+    }
+
+    int failures = 0;
+    for (const Placement &placement : kPlacements) {
+        const std::string source = dir + "/" + placement.staged;
+
+        struct stat st {};
+        if (stat(source.c_str(), &st) != 0) {
+            std::cerr << "artmoon-input-service: " << placement.staged
+                      << " was not staged\n";
+            ++failures;
+            continue;
+        }
+        if (!makeParentDirectories(placement.destination)) {
+            std::cerr << "artmoon-input-service: cannot create the directory for "
+                      << placement.destination << "\n";
+            ++failures;
+            continue;
+        }
+        if (!placeFile(source, placement.destination, placement.mode)) {
+            ++failures;
+            continue;
+        }
+        std::cout << placement.staged << " installed\n";
+    }
+    return failures == 0 ? 0 : 1;
+}
+#endif
+
 int main(int argc, char **argv)
 {
     // ── Fix what execvp will find, before anything can run ────────────────────────────
@@ -784,6 +979,7 @@ int main(int argc, char **argv)
     std::vector<std::string> wantList;
     std::vector<std::string> localList;
     std::string verb;
+    std::string fromDirectory;
 
     for (size_t i = 0; i < args.size(); ++i) {
         const std::string &arg = args[i];
@@ -795,6 +991,12 @@ int main(int argc, char **argv)
                 return 2;
             }
             (arg == "--want" ? wantList : localList).push_back(args[++i]);
+        } else if (arg == "--from") {
+            if (i + 1 >= args.size()) {
+                std::cerr << "artmoon-input-service: --from needs a directory\n";
+                return 2;
+            }
+            fromDirectory = args[++i];
         } else if (verb.empty()) {
             verb = arg;
         } else {
@@ -803,10 +1005,26 @@ int main(int argc, char **argv)
         }
     }
 
-    if (verb != "reconcile" && verb != "status") {
+    if (verb != "reconcile" && verb != "status" && verb != "install") {
         std::cerr << "usage: artmoon-input-service reconcile [--want <busid>]... "
                      "[--local <busid>]... [--dry-run]\n"
-                     "       artmoon-input-service status\n";
+                     "       artmoon-input-service status\n"
+                     "       artmoon-input-service install --from <staged-directory>\n";
+        return 2;
+    }
+
+    // Each verb gets the arguments it takes and no others, so a flag that belongs to one cannot
+    // quietly do nothing on another.
+    if (verb == "install" && (!wantList.empty() || !localList.empty() || dryRun)) {
+        std::cerr << "artmoon-input-service: install takes only --from\n";
+        return 2;
+    }
+    if (verb != "install" && !fromDirectory.empty()) {
+        std::cerr << "artmoon-input-service: --from belongs to install\n";
+        return 2;
+    }
+    if (verb == "install" && fromDirectory.empty()) {
+        std::cerr << "artmoon-input-service: install needs --from <staged-directory>\n";
         return 2;
     }
 
@@ -865,6 +1083,13 @@ int main(int argc, char **argv)
         std::cerr << "artmoon-input-service: binding needs administrator rights; "
                      "this ran without them. Nothing was changed.\n";
         return 3;
+    }
+
+    // One privileged run places every file, which is what makes the first setup a single
+    // approval rather than one per file. Placed here, above the reconcile work, because it
+    // shares the root gate and nothing else with it.
+    if (verb == "install") {
+        return installFrom(fromDirectory);
     }
 #endif
 

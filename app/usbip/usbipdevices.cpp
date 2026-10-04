@@ -695,12 +695,18 @@ void UsbIpDevices::installInputService()
     note = tr("The input service is installed with ArtMoon on Windows.");
 #else
     /*
-     * install(1) — not a shell command, and not a script carried in the bundle. That is a
-     * security choice, not a style one. Whatever we hand to pkexec runs as root, so it should
-     * be a system binary that takes two paths and does exactly one thing, and whoever approves
-     * the prompt can see precisely what is being authorised. Approving a script that lives in
-     * a user-writable mount would be authorising that script's PATH — and anything able to
-     * write to that path could then have a program of its own choosing run as root.
+     * The one privileged call runs our own helper, with a verb whose only job is placing these
+     * files. The alternatives — a shell, or a system binary given a destination per invocation
+     * — were rejected for the reason this comment has always given: whatever we hand to pkexec
+     * runs as root, so it should be something whose behaviour can be stated in one sentence and
+     * whose command line the approving person can read. `artmoon-input-service install --from
+     * <dir>` is both. A script would be neither, and it would turn the prompt into an
+     * authorisation of a PATH rather than of an act.
+     *
+     * It runs the *staged* copy, which lives in a directory this user owns, and that widens
+     * nothing: what gets placed is a binary the permission rule then runs as root *silently*
+     * for the rest of the machine's life. The user is approving their own payload either way.
+     * Now they approve it once, and the thing that runs is the thing being placed.
      *
      * The payload is staged first, and that is a requirement rather than a preference. An
      * AppImage runs from a FUSE mount, and the runtime mounts it WITHOUT allow_other or
@@ -714,8 +720,9 @@ void UsbIpDevices::installInputService()
      * of as a path would harden that last step, but it depends on pkexec carrying stdin
      * through, which is not established — so it is not what ships.
      *
-     * install applies mode and owner itself, so neither file ever exists at its system path
-     * with the wrong ownership, not even briefly.
+     * The helper applies mode and owner itself, and writes beside each destination before
+     * renaming over it, so no file ever exists at its system path with the wrong content,
+     * mode or ownership — not even briefly.
      */
     QTemporaryDir staging{
         qEnvironmentVariable("XDG_RUNTIME_DIR").isEmpty()
@@ -723,9 +730,10 @@ void UsbIpDevices::installInputService()
             : qEnvironmentVariable("XDG_RUNTIME_DIR") + QStringLiteral("/artmoon-install-XXXXXX")};
 
     /*
-     * Five files go down, one approval each: the helper; the polkit action that lets the app
-     * reach it later without a password prompt on every toggle; and the usbip client with the
-     * library it links against, plus the daemon that listens for an importer.
+     * Five files go down, and where each of them lands is the helper's business now — it owns
+     * the destination table. This side only says *what* it is handing over. That direction
+     * matters: a destination named by the unprivileged caller is a destination an attacker gets
+     * to name, on a program that runs as root.
      *
      * The action and the helper belong in the same step because the action is the very thing
      * being granted — installing the helper without it would leave a feature that works by
@@ -747,22 +755,26 @@ void UsbIpDevices::installInputService()
         QString bundled;
         QString stagedName;
         QString destination;
-        QString mode;
         QString label;
     };
 
     const Placement placements[] = {
         { bundledHelperPath(), QStringLiteral("artmoon-input-service"),
-          QLatin1String(kHelperPathLinux), QStringLiteral("0755"), tr("the input service") },
+          QLatin1String(kHelperPathLinux), tr("the input service") },
         { bundledPolicyPath(), QStringLiteral("org.artmoon.input-service.policy"),
-          QLatin1String(kPolicyPathLinux), QStringLiteral("0644"), tr("the permission rule") },
+          QLatin1String(kPolicyPathLinux), tr("the permission rule") },
         { bundledUsbipPath(), QStringLiteral("usbip"),
-          QLatin1String(kUsbipBinLinux), QStringLiteral("0755"), tr("the USB/IP tool") },
+          QLatin1String(kUsbipBinLinux), tr("the USB/IP tool") },
         { bundledUsbipLibPath(), QStringLiteral("libusbip.so.0"),
-          QLatin1String(kUsbipLibLinux), QStringLiteral("0644"), tr("its library") },
+          QLatin1String(kUsbipLibLinux), tr("its library") },
         { bundledUsbipdPath(), QStringLiteral("usbipd"),
-          QLatin1String(kUsbipdBinLinux), QStringLiteral("0755"), tr("the sharing service") },
+          QLatin1String(kUsbipdBinLinux), tr("the sharing service") },
     };
+
+    // Every file is prepared first, and only then is anything asked of root. Staging is
+    // unprivileged (a copy into this user's own 0700 directory, because root cannot traverse an
+    // AppImage's FUSE mount), so a failure here costs nothing and needs no prompt at all.
+    bool prepared = true;
 
     for (const Placement &placement : placements) {
         const QString staged = staging.isValid()
@@ -784,43 +796,56 @@ void UsbIpDevices::installInputService()
 
         if (!stagedOk) {
             note = tr("Not set up — %1 could not be prepared from this build.").arg(placement.label);
+            prepared = false;
             break;
         }
+    }
 
+    /*
+     * ONE privileged call, for all five files.
+     *
+     * This used to be one `pkexec install` per file — five files, five authorisations, five
+     * password dialogs, for one act. And every one of them was a generic exec authorisation,
+     * because `install` is not the helper and so the action this setup is busy installing could
+     * not cover it. Measured on the exporter 2026-10-04: exactly five dialogs, for a user who
+     * had asked for nothing but a device to be shareable.
+     *
+     * So the single call runs the helper, staged here first for the reason above, and the
+     * helper places all five. It already knows every destination; the app no longer names one,
+     * which also takes a root-writable path out of the unprivileged side's hands. After this
+     * the helper is silent for the rest of the machine's life, because the action granting that
+     * is one of the files it just placed — so this is the first and last prompt.
+     */
+    if (prepared) {
         QProcess proc;
         proc.start(QStringLiteral("pkexec"),
-                   { QStringLiteral("install"),
-                     // -D creates the leading directories. It is a no-op where they already
-                     // exist, which is every destination but the one this change adds, so it
-                     // costs nothing to have it on all of them rather than on one.
-                     QStringLiteral("-D"),
-                     QStringLiteral("-m"), placement.mode,
-                     QStringLiteral("-o"), QStringLiteral("root"),
-                     QStringLiteral("-g"), QStringLiteral("root"),
-                     staged, placement.destination });
+                   { staging.filePath(QStringLiteral("artmoon-input-service")),
+                     QStringLiteral("install"),
+                     QStringLiteral("--from"), staging.path() });
         proc.waitForFinished(120000);
 
         const int code = proc.exitCode();
         if (code == 126 || code == 127) {
             // pkexec's own meanings: the prompt was dismissed, or this user may not authenticate.
             note = tr("Not set up — the password prompt was closed.");
-            break;
-        }
-        if (code != 0) {
-            QString err = QString::fromLocal8Bit(proc.readAllStandardError()).trimmed();
+        } else if (code != 0) {
+            const QString err = QString::fromLocal8Bit(proc.readAllStandardError()).trimmed();
             note = err.isEmpty()
-                ? tr("Not set up — %1 could not be installed.").arg(placement.label)
+                ? tr("Not set up — the sharing components could not be installed.")
                 : err.split(QLatin1Char('\n')).first().trimmed();
-            break;
         }
+    }
 
-        // Decide from the artifact, never from the exit code. A copy that read nothing still
-        // leaves a file at the destination, and presence is what turns the toggles live — so a
-        // helper that cannot bind anything would look installed.
+    // Decide from the artifacts, never from the exit code, and check all of them the same way.
+    // A copy that read nothing still leaves a file at the destination, and presence is what
+    // turns the toggles live — so a helper that cannot bind anything would look installed.
+    for (const Placement &placement : placements) {
+        if (!note.isEmpty()) break;
+
         const QFileInfo installed{placement.destination};
         const QString want = fileSha256(placement.bundled);
         if (!installed.exists()) {
-            note = tr("Not set up — %1 reported success but nothing landed.").arg(placement.label);
+            note = tr("Not set up — %1 is missing after a successful setup.").arg(placement.label);
             break;
         }
         if (!want.isEmpty() && fileSha256(placement.destination) != want) {

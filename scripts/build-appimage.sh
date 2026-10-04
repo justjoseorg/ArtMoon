@@ -116,6 +116,60 @@ for BAD in '9-3; rm -rf /' '../9-3' 'a-3' '' ; do
         fail "The input service accepted a bad busid: '$BAD'"
     fi
 done
+
+# One privileged call now places every file, so that call reads a payload from a directory the
+# unprivileged app names. It may only ever read from one the app staged, and a false accept here
+# means a program running as root taking its instructions from a path an attacker chose. Every
+# one of these has to be refused, and as root — which is what this container is — so the check
+# being tested is the directory one and not the privilege gate in front of it.
+for BAD in '/etc' '/usr/local' '/usr/libexec' '/tmp' '/tmp/artmoon-install-x/../../etc' \
+           'relative/path' '' ; do
+    if "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" install --from "$BAD" >/dev/null 2>&1; then
+        fail "The input service installed from a directory it should not: '$BAD'"
+    fi
+done
+if "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" install >/dev/null 2>&1; then
+    fail "install ran with no --from"
+fi
+if "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" install --from /tmp/artmoon-install-x --want 1-6 >/dev/null 2>&1; then
+    fail "install accepted a busid"
+fi
+if "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" reconcile --from /tmp/artmoon-install-x >/dev/null 2>&1; then
+    fail "reconcile accepted --from"
+fi
+
+# And prove it does the thing, not only that it refuses. Refusals alone would pass just as well
+# if the verb were a stub. The sources come from where this build put them, which is where the
+# app takes them from, so this is the real payload through the real code path.
+STAGE=$(mktemp -d /tmp/artmoon-install-XXXXXX) || fail "could not make a staging directory"
+chmod 700 "$STAGE"
+cp "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service"        "$STAGE/artmoon-input-service"
+cp "$DEPLOY_FOLDER/usr/share/polkit-1/actions/org.artmoon.input-service.policy" \
+                                                             "$STAGE/org.artmoon.input-service.policy"
+cp "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbip"          "$STAGE/usbip"
+cp "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/libusbip.so.0"  "$STAGE/libusbip.so.0"
+cp "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbipd"         "$STAGE/usbipd"
+chmod 600 "$STAGE"/*
+"$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" install --from "$STAGE" >/dev/null \
+    || fail "install could not place the files it was given"
+for DEST in /usr/libexec/artmoon-input-service \
+            /usr/share/polkit-1/actions/org.artmoon.input-service.policy \
+            /usr/libexec/artmoon-usbip/usbip /usr/libexec/artmoon-usbip/libusbip.so.0 \
+            /usr/libexec/artmoon-usbip/usbipd ; do
+    [ -e "$DEST" ] || fail "install left $DEST missing"
+    [ "$(stat -c '%U:%G' "$DEST")" = "root:root" ] || fail "install left $DEST not owned by root"
+done
+[ "$(stat -c '%a' /usr/libexec/artmoon-usbip/libusbip.so.0)" = "644" ] \
+    || fail "install gave the library the wrong mode"
+[ "$(stat -c '%a' /usr/libexec/artmoon-input-service)" = "755" ] \
+    || fail "install gave the helper the wrong mode"
+cmp -s "$STAGE/usbipd" /usr/libexec/artmoon-usbip/usbipd \
+    || fail "the installed daemon is not the bytes that were staged"
+# The atomic write must not leave its temporary behind, or every setup would litter /usr/libexec.
+ls /usr/libexec/*.artmoon-new /usr/libexec/artmoon-usbip/*.artmoon-new >/dev/null 2>&1 \
+    && fail "install left a temporary file beside a destination"
+rm -rf "$STAGE"
+
 echo "Input service built, static, and refusing what it must refuse"
 
 # The polkit action that lets the app reach the helper without a password prompt on every
