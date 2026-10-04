@@ -70,6 +70,18 @@ class UsbIpDevices : public QObject
     Q_PROPERTY(QString canShareReason READ canShareReason NOTIFY devicesChanged)
 
     /*
+     * Why another machine cannot reach this one, ready to show. Empty when it can.
+     *
+     * Separate from the two above because it is a different kind of problem with a different
+     * remedy. `canShare` false means the toggle cannot act at all; this means it acted, the
+     * device really is offered, and the other machine still cannot see it — because there is
+     * no listener on the USB/IP port, or because no client is connected for a firewall rule to
+     * be scoped to. Every symptom on this screen looks identical from the far end, so without
+     * this the only way to tell them apart is to go and test from the other machine.
+     */
+    Q_PROPERTY(QString reachabilityReason READ reachabilityReason NOTIFY devicesChanged)
+
+    /*
      * The last toggle that did not take, ready to show. Empty when the machine is doing
      * what was asked of it.
      *
@@ -106,6 +118,7 @@ public:
     QString unavailableReason() const { return m_UnavailableReason; }
     bool canShare() const { return m_CanShare; }
     QString canShareReason() const { return m_CanShareReason; }
+    QString reachabilityReason() const { return m_ReachabilityReason; }
     QString toggleFailure() const { return m_ToggleFailure; }
     bool canInstallService() const { return m_CanInstallService; }
     bool installingService() const { return m_InstallingService; }
@@ -157,6 +170,7 @@ private:
     QString m_UnavailableReason;
     bool m_CanShare = false;
     QString m_CanShareReason;
+    QString m_ReachabilityReason;
     QString m_ToggleFailure;
     bool m_CanInstallService = false;
     bool m_InstallingService = false;

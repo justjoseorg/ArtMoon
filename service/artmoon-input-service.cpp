@@ -25,6 +25,17 @@
 // than read from a file because the helper runs as root: it must never be pointed at a
 // path a normal user can rewrite.
 //
+// `reconcile` also makes this machine *reachable*, whenever --want is non-empty, because a
+// device that is bound and unreachable is the failure this feature is most prone to. That
+// means a listener on 3240 (started, and enabled so it survives a restart) and, on a machine
+// that filters, a firewall rule for the one client we are actually serving. Both are derived
+// here rather than configured, and neither opens anything wider than that single machine.
+//
+// `status` answers "can another machine reach this one?" without privileges, by reading
+// /proc — so the app can ask the question without being able to change the answer. It prints
+// `reachable: <address>` or `unreachable: <code>`, where the code is `no-listener` or
+// `no-client`; the sentence shown to a person is written where it is shown, not here.
+//
 // Exit codes:  0 all actions succeeded
 //              1 at least one action failed
 //              2 bad arguments
@@ -57,6 +68,7 @@
 #include <cstring>
 #include <iostream>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -498,6 +510,236 @@ bool ensureDaemon()
     runProcess({ "systemctl", "enable", "--now", unit });
     return daemonIsListening();
 }
+
+// ── reachability ────────────────────────────────────────────────────────────────
+//
+// A listener is only half of it. On a machine that runs a firewall the port is still shut from
+// the outside, and the other machine's attach fails with a connection error that says nothing
+// about why. Measured on the exporter 2026-10-04: `systemctl enable --now usbipd` alone still
+// left Test-NetConnection false from the far end until a rule was added by hand.
+//
+// So this opens the port for exactly one machine, and only ever one — the client we are already
+// streaming to. Never a subnet, never "anywhere". If we cannot name that machine we open
+// nothing at all; see streamingPeer().
+
+// The ports a client connects TO when it is in a session with us. Taken from the product's own
+// address definitions rather than chosen here. The video and audio ports are UDP and so never
+// appear in the tables below; only the control and RTSP ports can match.
+const int kStreamingPorts[] = { 47984, 47989, 48002, 48010 };
+
+// The marker our own rules carry, so a rule of the user's is never mistaken for one of ours.
+const char *kRuleMarker = "artmoon-device-sharing";
+
+// /proc prints each 32-bit word in host order, so an IPv4 address's bytes come out reversed:
+// 10.6.0.3 is 0x0A060003 on the wire and "0300060A" in the file.
+std::string hexWordToAddress(const std::string &word)
+{
+    const unsigned long value = strtoul(word.c_str(), nullptr, 16);
+    char text[24];
+    snprintf(text, sizeof(text), "%lu.%lu.%lu.%lu",
+             (value >> 0) & 0xff, (value >> 8) & 0xff, (value >> 16) & 0xff, (value >> 24) & 0xff);
+    return std::string(text);
+}
+
+// The remote field of a /proc/net/tcp{,6} line as a dotted quad, or "" if it is not one we can
+// use. IPv6 in its v4-mapped form is handled because that is what a dual-stack listener reports
+// for a plain IPv4 client; anything genuinely IPv6 is left alone rather than guessed at.
+std::string remoteAddressOf(const std::string &table, const std::string &remote)
+{
+    const std::string::size_type colon = remote.rfind(':');
+    if (colon == std::string::npos) {
+        return std::string();
+    }
+    const std::string host = remote.substr(0, colon);
+    if (table == "/proc/net/tcp") {
+        return host.size() == 8 ? hexWordToAddress(host) : std::string();
+    }
+    // 32 hex digits, four words: ::ffff:a.b.c.d is zeros, zeros, 0000FFFF, then the address.
+    if (host.size() != 32 || host.compare(16, 8, "0000FFFF") != 0) {
+        return std::string();
+    }
+    for (int i = 0; i < 16; ++i) {
+        if (host[i] != '0') {
+            return std::string();
+        }
+    }
+    return hexWordToAddress(host.substr(24, 8));
+}
+
+struct Peer {
+    bool found = false;
+    std::string address;
+};
+
+// The machine we are actually serving: the far end of an established connection to one of our
+// streaming ports. Only a client that is in a session has one, which is what makes this the
+// narrow signal worth having — it names a machine that is genuinely connected, rather than
+// anyone who happens to share a network with us.
+Peer streamingPeer()
+{
+    Peer peer;
+    const char *const tables[] = { "/proc/net/tcp", "/proc/net/tcp6" };
+    for (const char *table : tables) {
+        FILE *file = fopen(table, "r");
+        if (!file) {
+            continue;
+        }
+        char line[512];
+        bool header = true;
+        while (!peer.found && fgets(line, sizeof(line), file)) {
+            if (header) {
+                header = false;
+                continue;
+            }
+            char local[128] = { 0 };
+            char remote[128] = { 0 };
+            char state[16] = { 0 };
+            if (sscanf(line, " %*d: %127s %127s %15s", local, remote, state) != 3) {
+                continue;
+            }
+            if (strcmp(state, "01") != 0) {         // 01 == ESTABLISHED
+                continue;
+            }
+            // The port we are being connected TO is the local one. The remote port is the
+            // client's own ephemeral port and says nothing about what it is doing.
+            const char *localColon = strrchr(local, ':');
+            if (!localColon) {
+                continue;
+            }
+            const unsigned long port = strtoul(localColon + 1, nullptr, 16);
+            bool streaming = false;
+            for (const int candidate : kStreamingPorts) {
+                if (port == static_cast<unsigned long>(candidate)) {
+                    streaming = true;
+                }
+            }
+            if (!streaming) {
+                continue;
+            }
+            const std::string address = remoteAddressOf(table, remote);
+            // Loopback is not another machine, and a rule for it would do nothing while looking
+            // like it had done something.
+            if (address.empty() || address.compare(0, 4, "127.") == 0) {
+                continue;
+            }
+            peer.found = true;
+            peer.address = address;
+        }
+        fclose(file);
+        if (peer.found) {
+            break;
+        }
+    }
+    return peer;
+}
+
+enum class Firewall { None, Ufw, Firewalld };
+
+bool binaryExists(const char *path)
+{
+    return access(path, X_OK) == 0;
+}
+
+// Only two backends, and deliberately. ufw and firewalld both own their rules and both can be
+// told about a single machine. Anything else is left alone rather than guessed at with raw nft
+// or iptables, where a rule we add is a rule the user cannot find again — and where being
+// slightly wrong means opening more than we meant to.
+Firewall detectFirewall()
+{
+    if (binaryExists("/usr/sbin/ufw") || binaryExists("/sbin/ufw")) {
+        const auto status = runProcess({ "ufw", "status" });
+        return status.output.find("Status: active") != std::string::npos ? Firewall::Ufw
+                                                                        : Firewall::None;
+    }
+    if (binaryExists("/usr/bin/firewall-cmd") || binaryExists("/usr/sbin/firewall-cmd")) {
+        const auto state = runProcess({ "firewall-cmd", "--state" });
+        return state.output.find("running") != std::string::npos ? Firewall::Firewalld
+                                                                 : Firewall::None;
+    }
+    return Firewall::None;
+}
+
+bool allowPortFor(const std::string &address, Firewall firewall)
+{
+    if (firewall == Firewall::Ufw) {
+        return runProcess({ "ufw", "allow", "from", address, "to", "any", "port", "3240",
+                            "proto", "tcp", "comment", kRuleMarker }).exitCode == 0;
+    }
+    if (firewall == Firewall::Firewalld) {
+        const std::string rule = "rule family=\"ipv4\" source address=\"" + address
+                                 + "\" port port=\"3240\" protocol=\"tcp\" accept";
+        if (runProcess({ "firewall-cmd", "--permanent", "--add-rich-rule=" + rule }).exitCode != 0) {
+            return false;
+        }
+        runProcess({ "firewall-cmd", "--reload" });
+        return true;
+    }
+    return true;        // nothing is filtering, so the listener is already the whole story
+}
+
+// Take back what was opened for a machine we are no longer serving.
+//
+// Without this the port slowly opens to every client that has ever connected — each one its own
+// rule, none of them visible unless the user goes looking for them. Only rules carrying our own
+// marker are touched, so a rule the user wrote themselves stays exactly where it is.
+void revokeStaleRules(const std::string &keep, Firewall firewall)
+{
+    if (firewall == Firewall::Ufw) {
+        const auto status = runProcess({ "ufw", "status", "verbose" });
+        if (status.exitCode != 0) {
+            return;
+        }
+        std::istringstream lines(status.output);
+        std::string line;
+        while (std::getline(lines, line)) {
+            if (line.find(kRuleMarker) == std::string::npos || line.find("3240") == std::string::npos) {
+                continue;
+            }
+            // "3240/tcp   ALLOW IN   10.6.0.3   # artmoon-device-sharing" — the address is the
+            // last field that looks like one, and nothing after the comment marker counts.
+            std::istringstream fields(line);
+            std::string token;
+            std::string address;
+            while (fields >> token) {
+                if (token == "#") {
+                    break;
+                }
+                if (token.find('.') != std::string::npos) {
+                    address = token;
+                }
+            }
+            if (address.empty() || address == keep) {
+                continue;
+            }
+            runProcess({ "ufw", "--force", "delete", "allow", "from", address, "to", "any",
+                         "port", "3240", "proto", "tcp" });
+        }
+        return;
+    }
+
+    if (firewall == Firewall::Firewalld) {
+        const auto rules = runProcess({ "firewall-cmd", "--permanent", "--list-rich-rules" });
+        if (rules.exitCode != 0) {
+            return;
+        }
+        std::istringstream lines(rules.output);
+        std::string rule;
+        bool changed = false;
+        while (std::getline(lines, rule)) {
+            if (rule.find("3240") == std::string::npos
+                || rule.find("source address=") == std::string::npos
+                || rule.find(keep) != std::string::npos) {
+                continue;
+            }
+            if (runProcess({ "firewall-cmd", "--permanent", "--remove-rich-rule=" + rule }).exitCode == 0) {
+                changed = true;
+            }
+        }
+        if (changed) {
+            runProcess({ "firewall-cmd", "--reload" });
+        }
+    }
+}
 #endif
 
 } // namespace
@@ -593,8 +835,19 @@ int main(int argc, char **argv)
 #ifndef _WIN32
         // Answered unprivileged, because it only reads /proc — which is what lets the app ask
         // "can another machine reach me?" without being able to change the answer.
-        std::cout << (daemonIsListening() ? "listening on 3240\n"
-                                          : "nothing is listening on 3240\n");
+        //
+        // It cannot read the firewall without root, so it reports the two things it can prove
+        // and leaves the rule itself to `reconcile`, which does run as root. The wording is a
+        // code and an address rather than a sentence: the sentence belongs on the screen that
+        // shows it, where it can be translated and can name the remedy.
+        const Peer peer = streamingPeer();
+        if (!daemonIsListening()) {
+            std::cout << "unreachable: no-listener\n";
+        } else if (!peer.found) {
+            std::cout << "unreachable: no-client\n";
+        } else {
+            std::cout << "reachable: " << peer.address << "\n";
+        }
 #endif
         const auto exported = exportedBusids();
         if (exported.empty()) {
@@ -657,12 +910,36 @@ int main(int argc, char **argv)
     // anyway — but a user who has toggled sharing on, had the daemon stopped underneath them,
     // and toggled nothing since, has nothing left to bind and would never reach this. What they
     // asked for is sharing, so sharing is what gets made true.
-    if (!wantList.empty() && !ensureDaemon()) {
-        std::cerr << "could not start the USB/IP service, so no other machine can reach this "
-                     "one. Devices will still be offered locally.\n";
-        // Deliberately not fatal: the bind below is still worth doing, and the app reports the
-        // listener separately through `status`. Failing here would turn a reachability problem
-        // into a feature that looks entirely broken.
+    if (!wantList.empty()) {
+        if (!ensureDaemon()) {
+            std::cerr << "could not start the USB/IP service, so no other machine can reach this "
+                         "one. Devices will still be offered locally.\n";
+            // Deliberately not fatal: the bind below is still worth doing, and the app reports
+            // the listener separately through `status`. Failing here would turn a reachability
+            // problem into a feature that looks entirely broken.
+        }
+
+        // And the other half of reachability, for a machine that filters. A listener being up is
+        // not the same as the port being open, and the exporter showed exactly that: reachable
+        // from the far end only after a rule, with the daemon already running.
+        const Firewall firewall = detectFirewall();
+        if (firewall == Firewall::None) {
+            // Nothing is filtering, so the listener above is already the whole story.
+        } else {
+            const Peer peer = streamingPeer();
+            if (!peer.found) {
+                // We will not open a port for a machine we cannot name. "Anywhere" is a
+                // different feature with a different risk, and this is not it.
+                std::cerr << "no client is connected, so the firewall has not been opened for "
+                             "one. Start a session from the other machine, then toggle sharing "
+                             "again.\n";
+            } else {
+                revokeStaleRules(peer.address, firewall);
+                if (!allowPortFor(peer.address, firewall)) {
+                    std::cerr << "could not open port 3240 for " << peer.address << "\n";
+                }
+            }
+        }
     }
 
     if (!plan.toBind.empty() && !ensureExporterModule()) {

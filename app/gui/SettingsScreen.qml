@@ -127,12 +127,18 @@ FocusScope {
     /*
      * The USB devices block's one notice line, and its glyph.
      *
-     * Computed here rather than inside the block because three different reasons can stop
-     * that block acting — no USB/IP on this PC, nothing plugged in, and no administrator
-     * rights — and a block that works out its own reason is a block that can disagree with
-     * itself about which one applies. The notice row is the existing grammar for "these
-     * rows cannot act, and here is why", already used by the stream-tweak and host-profile
-     * blocks; this is the same sentence with a third reason.
+     * Computed here rather than inside the block because four different reasons can stop that
+     * block being useful — no USB/IP on this PC, nothing plugged in, no administrator rights,
+     * and nothing able to reach this PC from outside — and a block that works out its own
+     * reason is a block that can disagree with itself about which one applies. The notice row
+     * is the existing grammar for "these rows cannot do what you expect, and here is why",
+     * already used by the stream-tweak and host-profile blocks; this is the same sentence with
+     * a fourth reason.
+     *
+     * The reachability one is the odd member: the rows above it genuinely CAN act, and the
+     * device really is shared. It is here because from the other machine's side that is
+     * indistinguishable from sharing being broken, and it is the reason someone opens this
+     * screen in the first place.
      */
     readonly property string _usbNotice: {
         if (!UsbIpDevices.available)
@@ -141,6 +147,10 @@ FocusScope {
             return qsTr("No USB devices are plugged into this PC.")
         if (!UsbIpDevices.canShare)
             return UsbIpDevices.canShareReason
+        // Before the failed toggle, because it is the wider condition: a toggle that did not
+        // take affects one device, and this affects every device on the list at once.
+        if (UsbIpDevices.reachabilityReason !== "")
+            return UsbIpDevices.reachabilityReason
         // A toggle was asked for and the machine did not change. Worth saying even though the
         // rows CAN act — "Not shared yet" alone reads the same whether the bind is still
         // landing or nothing ever heard the request.
@@ -153,6 +163,8 @@ FocusScope {
             return "\uD83D\uDD0C"     // 🔌 this PC cannot do it
         if (UsbIpDevices.devices.length === 0)
             return "\uD83D\uDD0D"     // 🔍 nothing to show
+        if (UsbIpDevices.canShare && UsbIpDevices.reachabilityReason !== "")
+            return "\uD83D\uDCE1"     // 📡 shared here, but nothing can reach it
         // Only when the rows CAN act: otherwise the reason above is a permission one and the
         // key is the honest glyph. This changes nothing except the failed-toggle case.
         if (UsbIpDevices.canShare && UsbIpDevices.toggleFailure !== "")

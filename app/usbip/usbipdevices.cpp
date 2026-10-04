@@ -384,6 +384,51 @@ void UsbIpDevices::refresh()
 #endif
     }
 
+    /*
+     * ── Can another machine actually reach this one? ──────────────────────────
+     *
+     * The failure this whole feature is prone to, and the one nothing on this screen could
+     * describe before: the toggles are live, the device says it is shared, and the other
+     * machine still cannot see it. That is what happens when nothing is listening on the
+     * USB/IP port, or when the port is shut from the outside — and from the far end those two
+     * look identical, so the only way to tell them apart was to go and test from there.
+     *
+     * The helper answers it, unprivileged, out of /proc. Its words are used rather than a
+     * second opinion invented here: it is the same code that decides whether to open the
+     * firewall, so the answer and the action cannot drift apart.
+     */
+    m_ReachabilityReason.clear();
+#ifndef Q_OS_WIN32
+    if (m_CanShare) {
+        QProcess helper;
+        helper.start(QLatin1String(kHelperPathLinux), { QStringLiteral("status") });
+        if (helper.waitForFinished(2000) && helper.exitCode() == 0) {
+            const QString output = QString::fromLocal8Bit(helper.readAllStandardOutput());
+            const QStringList lines = output.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+            for (const QString &line : lines) {
+                if (!line.startsWith(QLatin1String("unreachable:"))) {
+                    continue;
+                }
+                const QString code = line.mid(12).trimmed();
+                if (code == QLatin1String("no-listener")) {
+                    m_ReachabilityReason = tr("This PC is not accepting device connections, so no "
+                         "other machine can see anything shared from it. Restarting ArtMoon will "
+                         "try to start it again.");
+                } else if (code == QLatin1String("no-client")) {
+                    m_ReachabilityReason = tr("Nothing is connected to this PC yet, so sharing has "
+                         "not been opened for anyone. Start a session from the other machine, then "
+                         "toggle the device again.");
+                } else {
+                    // A code this build does not know. Show it rather than swallow it — an
+                    // unexplained silence is what this whole block exists to remove.
+                    m_ReachabilityReason = code;
+                }
+                break;
+            }
+        }
+    }
+#endif
+
     rebuild();
 }
 
