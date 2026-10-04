@@ -15,6 +15,7 @@
 #include <QVariantMap>
 
 #include "settings/streamingpreferences.h"
+#include "streaming/session.h"
 
 namespace {
 
@@ -686,22 +687,39 @@ void UsbIpDevices::watchForPeer()
 {
     const QStringList wanted = wantedBusids();
 
-    // The session has ended, so hand the device back.
+    // Is a stream actually running on this machine?
     //
-    // Switching a device on is a loan for the length of a stream, not a permanent handover.
-    // When the machine we were streaming with goes, nothing is using the export any more — and
-    // an export left bound is a device the person at this machine can no longer use, which is
-    // the thing they notice, and rightly call a bug. Reconciling with nothing wanted makes the
-    // helper unbind what it bound and take its firewall rule away with it.
+    // This is the question the bind should always have been keyed on, and it is the one question
+    // the network cannot answer. A connection on a streaming port means ArtMoon is talking to the
+    // other machine — and ArtMoon talks to it to draw the app list, every few seconds, whether or
+    // not anyone is streaming. The helper accepts only ESTABLISHED and that look is open for a
+    // fraction of a second, so it was caught by luck: the peer appeared, the grace expired fifteen
+    // seconds later when the next look was missed, and the device was bound and handed back on a
+    // 16-to-36-second cycle underneath someone who was not streaming anything at all. Measured on
+    // the exporter 2026-10-04, and it is the whole of the flapping.
+    //
+    // The app is the client here, so the app knows, and it knows earlier than the port does:
+    // `s_ActiveSession` is set the moment a stream is launched — before the connection thread even
+    // starts, which is seconds ahead of the other machine beginning its session and reaching for
+    // the device. That is the lead the port watch was being used for, with none of the guesses.
+    const bool streaming = Session::get() != nullptr;
+
+    // Nothing is streaming, so nothing of ours should be out.
+    //
+    // Written as a state and not as the fall from a peer, so that a device left bound by an
+    // earlier run — or by a session that ended while this poll was not looking — is picked up on
+    // the next one. There is no path from here to a bind: this branch can only ever give a device
+    // back. Reconciling with nothing wanted makes the helper unbind what it bound and take its
+    // firewall rule away with it.
     //
     // The tick itself is untouched: that is the standing choice, and the next session binds it
-    // again. So this fires on the fall from a peer to no peer, once — which is why the state is
-    // cleared here rather than left to the early return below.
-    if (!m_LastPeer.isEmpty() && m_ReachablePeer.isEmpty()) {
-        m_LastPeer.clear();
+    // again.
+    if (!streaming) {
+        const bool handBack = m_CanShare && anythingExported();
         m_OpenedForPeer.clear();
+        m_LastPeer.clear();
         m_PeerAttempts = 0;
-        if (m_CanShare && !wanted.isEmpty()) {
+        if (handBack) {
             reconcileWithService(QStringList(), false);
         }
         return;
@@ -736,6 +754,18 @@ void UsbIpDevices::watchForPeer()
     else {
         ++m_PeerAttempts;
     }
+}
+
+bool UsbIpDevices::anythingExported() const
+{
+    // The same field the poll interval already reads, asked for a different reason: is there
+    // anything of ours out there to bring home?
+    for (const auto &entry : m_Devices) {
+        if (entry.toMap().value(QStringLiteral("shared")).toBool()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void UsbIpDevices::rebuild()

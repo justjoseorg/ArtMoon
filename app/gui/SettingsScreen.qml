@@ -2681,17 +2681,23 @@ FocusScope {
                                             font.bold: true
                                             color: settingsScreen._text
                                         }
-                                        // The state is shown, not implied. `wanted` and
-                                        // `shared` are different questions — a device can be
-                                        // asked for and not yet shared — so the line names
-                                        // which of the two the row is currently in.
+                                        // The state is shown, not implied, and it is the state
+                                        // the user asked for: "Shared" means sharing is switched
+                                        // on for this device — which is what it means on Windows,
+                                        // and what the person reading it means by it.
+                                        //
+                                        // It does NOT mean the device is out on the wire. On
+                                        // Linux there is no state for "shareable but still mine":
+                                        // `usbip bind` detaches the device the moment it runs. So
+                                        // the line reads the tick and nothing else, and it cannot
+                                        // flap when the kernel's bind list does. The old wording
+                                        // read the bind list, and on 2026-10-04 it went Shared /
+                                        // Not shared yet / Shared while the person watched.
                                         Label {
                                             text: modelData.vidPid + "  ·  " + modelData.busid
-                                                  + "  ·  " + (modelData.shared
+                                                  + "  ·  " + (modelData.wanted
                                                                ? qsTr("Shared")
-                                                               : (modelData.wanted
-                                                                  ? qsTr("Not shared yet")
-                                                                  : qsTr("Not shared")))
+                                                               : qsTr("Not shared"))
                                             font.family: Theme.family
                                             font.pixelSize: settingsScreen._px(Theme.fontSmall)
                                             color: settingsScreen._textDim

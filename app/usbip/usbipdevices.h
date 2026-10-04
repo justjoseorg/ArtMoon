@@ -184,6 +184,14 @@ private:
     QString describeToggleFailure() const;
 
     /*
+     * Is anything of ours bound right now?
+     *
+     * The idle path in watchForPeer() can only ever give a device back, so it needs to know
+     * whether there is anything to hand back before it asks for a privileged run. See the .cpp.
+     */
+    bool anythingExported() const;
+
+    /*
      * Is the helper on this PC the one this build carries?
      *
      * Presence is not currency: an install from an older build satisfies every other property
