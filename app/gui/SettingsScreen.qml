@@ -2527,15 +2527,29 @@ FocusScope {
                 // that is the opposite PC, so the bare words invert the whole design.
                 // ArtMoon, ArtLight, exporter, importer. See
                 // docs/usb-ip-input-passthrough.md.
-                Label {
-                    text: qsTr("USB devices on this PC")
-                    font.family: Theme.family
-                    font.pixelSize: settingsScreen._px(Theme.fontSmall)
-                    font.bold: true
-                    font.letterSpacing: 1.4
-                    font.capitalization: Font.AllUppercase
-                    color: settingsScreen._textMut
-                    leftPadding: settingsScreen._px(14)
+                Row {
+                    spacing: settingsScreen._px(10)
+
+                    Label {
+                        text: qsTr("USB devices on this PC")
+                        font.family: Theme.family
+                        font.pixelSize: settingsScreen._px(Theme.fontSmall)
+                        font.bold: true
+                        font.letterSpacing: 1.4
+                        font.capitalization: Font.AllUppercase
+                        color: settingsScreen._textMut
+                        leftPadding: settingsScreen._px(14)
+                    }
+
+                    // Said here because this is where someone would otherwise assume any
+                    // Sunshine-derived client can attach one of these. USB/IP is ours end to
+                    // end: the attach side lives in ArtLight, and nothing else carries it.
+                    Label {
+                        text: qsTr("USB/IP requires ArtLight")
+                        font.family: Theme.family
+                        font.pixelSize: settingsScreen._px(Theme.fontSmall)
+                        color: Theme.text3
+                    }
                 }
 
                 Rectangle {
