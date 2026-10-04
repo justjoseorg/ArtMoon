@@ -162,6 +162,23 @@ private:
     void settle();
     bool anyUnsettled() const;
 
+    /*
+     * Ask the service to reconcile. True when it ran and did not refuse.
+     *
+     * The return value exists for watchForPeer(): a poll has to be able to tell "opened" from
+     * "refused" without inventing a state of its own. See the .cpp.
+     */
+    bool reconcileWithService(const QStringList &busids, bool isUserToggle);
+
+    /*
+     * Open the connection for the machine streaming here, once there is one.
+     *
+     * Without this the firewall rule could only ever be opened by the user toggling a second
+     * time, because the rule is scoped to a machine that is already in a session and no
+     * session exists at the moment of the toggle. See the .cpp.
+     */
+    void watchForPeer();
+
     /* Why a toggle did not take, as far as we can actually tell. See the .cpp. */
     QString describeToggleFailure() const;
 
@@ -177,4 +194,11 @@ private:
 
     QTimer m_SettleTimer;
     int m_SettleTries = 0;
+
+    /* Repeating, and only while something is switched on. See watchForPeer(). */
+    QTimer m_PeerTimer;
+    QString m_ReachablePeer;      /* as last reported by the helper, empty when unreachable */
+    QString m_LastPeer;           /* the one the attempts below belong to */
+    QString m_OpenedForPeer;      /* the one we have already opened the connection for */
+    int m_PeerAttempts = 0;
 };

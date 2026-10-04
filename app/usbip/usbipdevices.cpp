@@ -70,6 +70,29 @@ const char *kUsbipdBinLinux     = "/usr/libexec/artmoon-usbip/usbipd";
  * device a heartbeat after the helper returns, not a slow operation.
  */
 constexpr int kSettleIntervalMs = 1200;
+
+/*
+ * How often to look for a machine streaming here, while anything is switched on.
+ *
+ * Five seconds is a guess with a reason: the rule has to be open before the far machine's
+ * attach, and an attach that is refused is retried by the user, not by us. Long enough that
+ * the check is invisible, short enough that it has almost always already happened by the time
+ * anyone could notice.
+ */
+constexpr int kPeerIntervalMs = 5000;
+
+/*
+ * How many times to try opening for one machine before leaving it alone.
+ *
+ * The call goes through pkexec, and polkit grants this one only to the local ACTIVE session —
+ * deliberately, so a session nobody is sitting at cannot use it. An exporter that is streaming
+ * with its desktop unlocked is active and needs no dialog; one whose screen is locked is not,
+ * and the call is refused. Three tries covers a session that was momentarily not the active
+ * one. Past that it waits for the machine to change rather than asking again every five
+ * seconds, because a password dialog appearing on its own, repeatedly, is worse than a
+ * connection that did not open.
+ */
+constexpr int kPeerAttempts = 3;
 constexpr int kSettleTries      = 6;
 
 /* Platform tool that enumerates. `usbipd` is not on PATH by default on Windows. */
@@ -149,6 +172,11 @@ QStringList exportedBusidsLinux()
 UsbIpDevices::UsbIpDevices(QObject *parent)
     : QObject(parent)
 {
+    // Repeating, unlike the settle timer. This one watches for something another machine does,
+    // and it stops the moment nothing is switched on. See watchForPeer().
+    m_PeerTimer.setInterval(kPeerIntervalMs);
+    connect(&m_PeerTimer, &QTimer::timeout, this, &UsbIpDevices::refresh);
+
     m_SettleTimer.setSingleShot(true);
     connect(&m_SettleTimer, &QTimer::timeout, this, &UsbIpDevices::settle);
     refresh();
@@ -264,10 +292,11 @@ void UsbIpDevices::refresh()
         // rather than a trip to the internet — which is what lets this sentence name it. Both
         // branches used to carry the identical string inside a Windows-only #ifdef, which said
         // nothing at all.
-        m_UnavailableReason = tr("USB/IP is not installed on this PC. Re-running the ArtMoon "
-             "installer with \"Device sharing\" ticked will add it.");
+        m_UnavailableReason = tr("Device sharing is not installed on this PC. Running the "
+             "ArtMoon installer again, with \"Device sharing\" ticked, will add it.");
 #else
-        m_UnavailableReason = tr("USB/IP is not installed on this PC.");
+        m_UnavailableReason = tr("The device sharing tools are missing from this copy of "
+             "ArtMoon, so this PC cannot share a device.");
 #endif
     }
     else {
@@ -305,7 +334,7 @@ void UsbIpDevices::refresh()
                 err = QString::fromLocal8Bit(proc.readAllStandardOutput()).trimmed();
             }
             m_UnavailableReason = err.isEmpty()
-                ? tr("USB/IP did not answer on this PC.")
+                ? tr("The device sharing tools on this PC did not answer.")
                 : err.split(QLatin1Char('\n')).first().trimmed();
         }
     }
@@ -362,11 +391,12 @@ void UsbIpDevices::refresh()
         // from a build that predates the permission rule, or a policy file removed by hand —
         // and a single generic sentence would hide which half is actually missing.
         m_CanShareReason = QFileInfo::exists(QLatin1String(kHelperPathLinux))
-            ? tr("Sharing a device needs administrator rights. The ArtMoon input service is here, "
-                 "but the permission rule that lets ArtMoon reach it is not — setting it up will "
-                 "place the missing piece.")
-            : tr("Sharing a device needs administrator rights. This build includes the ArtMoon "
-                 "input service, which does that for you, but it is not set up on this PC yet.");
+            ? tr("Sharing a device needs administrator rights, which ArtMoon's sharing helper "
+                 "does for you. The helper is on this PC but the rule that lets ArtMoon use it "
+                 "is not — running setup from this screen will finish it.")
+            : tr("Sharing a device needs administrator rights, which ArtMoon's sharing helper "
+                 "does for you. It is not set up on this PC yet — running setup from this screen "
+                 "will do it.");
     }
     else {
 #ifdef Q_OS_WIN32
@@ -375,12 +405,12 @@ void UsbIpDevices::refresh()
         // on THIS machine, and the remedy is the installer. The Linux sentence below describes a
         // build that genuinely lacks the bundled helper, and would send a Windows user hunting a
         // build flag that does not exist.
-        m_CanShareReason = tr("Sharing a device needs administrator rights, which the ArtMoon input "
-             "service does on your behalf. The service is not set up on this PC — re-running the "
-             "ArtMoon installer will place it.");
+        m_CanShareReason = tr("Sharing a device needs administrator rights, which ArtMoon's "
+             "sharing helper does for you. It is not set up on this PC — running the ArtMoon "
+             "installer again will add it.");
 #else
-        m_CanShareReason = tr("Sharing a device needs administrator rights, which the ArtMoon input service "
-             "does on your behalf. It is not installed in this build yet.");
+        m_CanShareReason = tr("Sharing a device needs administrator rights, which ArtMoon's "
+             "sharing helper does for you. This version of ArtMoon does not include it.");
 #endif
     }
 
@@ -398,6 +428,7 @@ void UsbIpDevices::refresh()
      * firewall, so the answer and the action cannot drift apart.
      */
     m_ReachabilityReason.clear();
+    m_ReachablePeer.clear();
 #ifndef Q_OS_WIN32
     if (m_CanShare) {
         QProcess helper;
@@ -406,6 +437,13 @@ void UsbIpDevices::refresh()
             const QString output = QString::fromLocal8Bit(helper.readAllStandardOutput());
             const QStringList lines = output.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
             for (const QString &line : lines) {
+                // The reachable case is the one that matters to the machine, not the screen:
+                // it is the moment a streaming peer exists, and therefore the moment the
+                // firewall rule may be opened. Read it here, act on it in watchForPeer().
+                if (line.startsWith(QLatin1String("reachable:"))) {
+                    m_ReachablePeer = line.mid(10).trimmed();
+                    continue;
+                }
                 if (!line.startsWith(QLatin1String("unreachable:"))) {
                     continue;
                 }
@@ -427,18 +465,23 @@ void UsbIpDevices::refresh()
                     // reconcile runs again on startup with the wanted list and that is what brings
                     // the listener up.
                     if (wantedBusids().isEmpty()) {
-                        m_ReachabilityReason = tr("Nothing is being shared from this PC yet, so no "
-                             "other machine can see anything from it. Turn a device on and ArtMoon "
-                             "will make it reachable.");
+                        m_ReachabilityReason = tr("Nothing is switched on below, so there is "
+                             "nothing for your other machines to use yet. Switch a device on and "
+                             "ArtMoon will make it available.");
                     } else {
-                        m_ReachabilityReason = tr("This PC is not accepting device connections, so no "
-                             "other machine can see anything shared from it. Restarting ArtMoon will "
-                             "try to start it again.");
+                        m_ReachabilityReason = tr("Sharing is switched on, but this PC is not "
+                             "accepting connections, so nothing switched on below can be used. "
+                             "Restart ArtMoon to try to start it.");
                     }
                 } else if (code == QLatin1String("no-client")) {
-                    m_ReachabilityReason = tr("Nothing is connected to this PC yet, so sharing has "
-                         "not been opened for anyone. Start a session from the other machine, then "
-                         "toggle the device again.");
+                    // The second toggle used to live in this sentence. It was true when it was
+                    // written and it is not any more: watchForPeer() opens the connection the
+                    // moment a machine starts streaming here, so the user's only job is to start
+                    // that stream. A message that asks for work we now do ourselves is worse than
+                    // no message — it teaches a step that has stopped existing.
+                    m_ReachabilityReason = tr("Everything switched on below is ready. Start a "
+                         "stream to this PC from the other machine and it will be able to use "
+                         "them — ArtMoon opens the connection by itself when you do.");
                 } else {
                     // A code this build does not know. Show it rather than swallow it — an
                     // unexplained silence is what this whole block exists to remove.
@@ -450,7 +493,91 @@ void UsbIpDevices::refresh()
     }
 #endif
 
+#ifdef Q_OS_WIN32
+    // Windows had nothing here at all. The whole block above is Linux-only, so a machine whose
+    // service had stopped showed no notice, no reason, and toggles that looked perfectly fine —
+    // the failure this feature is most prone to, silent on the platform it was built for first.
+    //
+    // Presence is not reachability on either platform: the registry says the service is
+    // installed, and only its pipe says it is answering. Same probe describeToggleFailure()
+    // uses, asked at the same time and for the same reason.
+    if (m_CanShare && !wantedBusids().isEmpty() && m_ReachabilityReason.isEmpty()) {
+        QLocalSocket probe;
+        probe.connectToServer(QLatin1String(kServiceNameWindows));
+        if (!probe.waitForConnected(1200)) {
+            m_ReachabilityReason = tr("Sharing is switched on, but ArtMoon's sharing helper is "
+                 "not running, so nothing switched on below can be used. Restart ArtMoon to "
+                 "start it again.");
+        }
+        else {
+            probe.disconnectFromServer();
+        }
+    }
+#endif
+
+    watchForPeer();
+
+    // Keep looking while anything is switched on, and stop the moment nothing is. The state
+    // this is watching for is created by the other machine, not by us, so the only way to
+    // know about it is to ask — and asking forever when nothing is shared would be a
+    // background cost for no answer.
+    if (m_CanShare && !wantedBusids().isEmpty()) {
+        if (!m_PeerTimer.isActive()) {
+            m_PeerTimer.start(kPeerIntervalMs);
+        }
+    }
+    else {
+        m_PeerTimer.stop();
+    }
+
     rebuild();
+}
+
+/*
+ * Open the connection for the machine that is streaming here, once it exists.
+ *
+ * The firewall rule is scoped to one address, and the only address worth opening for is a
+ * machine already in a session with us — so the rule cannot be written when the user toggles a
+ * device on, because at that moment nobody is streaming. It has to be written when the session
+ * appears instead. Nothing tells the app that this happened, so it looks.
+ *
+ * Deliberately does not refresh afterwards: this runs from inside refresh(), and a second pass
+ * from here would be a loop. The next poll reads the result, which is also the honest order —
+ * the rule is a request, and the answer is what /proc says afterwards.
+ */
+void UsbIpDevices::watchForPeer()
+{
+    const QStringList wanted = wantedBusids();
+
+    if (!m_CanShare || wanted.isEmpty() || m_ReachablePeer.isEmpty()) {
+        m_OpenedForPeer.clear();
+        m_LastPeer.clear();
+        m_PeerAttempts = 0;
+        return;
+    }
+
+    // A different machine — or the same one arriving again after a gap — starts over.
+    if (m_ReachablePeer != m_LastPeer) {
+        m_LastPeer = m_ReachablePeer;
+        m_OpenedForPeer.clear();
+        m_PeerAttempts = 0;
+    }
+
+    // Already open for this one. Re-running would re-derive the same rule on every poll.
+    if (m_OpenedForPeer == m_ReachablePeer) {
+        return;
+    }
+
+    if (m_PeerAttempts >= kPeerAttempts) {
+        return;
+    }
+
+    if (reconcileWithService(wanted, false)) {
+        m_OpenedForPeer = m_ReachablePeer;
+    }
+    else {
+        ++m_PeerAttempts;
+    }
 }
 
 void UsbIpDevices::rebuild()
@@ -512,79 +639,7 @@ void UsbIpDevices::setWanted(const QString &busid, bool wanted)
     //
     // The desired set is handed over explicitly rather than read from a file: the helper runs
     // as root, so it must never be pointed at a path an unprivileged process can rewrite.
-    if (m_CanShare) {
-#ifdef Q_OS_WIN32
-        /*
-         * The service is reached over its own local pipe — not through `sc start`, because a
-         * service that is already running refuses a start (error 1056), so start arguments
-         * could only ever deliver the first desired set and never another one.
-         *
-         * The PLAN is built here rather than in the service. This is the side that parses
-         * usbipd's table, so this is the side that knows what needs releasing — one parser in
-         * the product, and it is the one with tests. The service executes and refuses; it does
-         * not decide.
-         */
-        QStringList tokens;
-        for (const auto &entry : m_Devices) {
-            const QVariantMap row = entry.toMap();
-            const QString busid = row.value(QStringLiteral("busid")).toString();
-            if (busid.isEmpty()) {
-                continue;
-            }
-            const bool want = busids.contains(busid);
-            const bool shared = row.value(QStringLiteral("shared")).toBool();
-            if (want && !shared) {
-                tokens << (QStringLiteral("+") + busid);
-            }
-            else if (!want && shared) {
-                tokens << (QStringLiteral("-") + busid);
-            }
-        }
-
-        if (!tokens.isEmpty()) {
-            QLocalSocket service;
-            // Qt maps this onto \\.\pipe\ArtMoonInputService on Windows.
-            service.connectToServer(QStringLiteral("ArtMoonInputService"));
-            if (service.waitForConnected(2000)) {
-                service.write(QStringLiteral("reconcile %1\n")
-                                  .arg(tokens.join(QLatin1Char(' '))).toUtf8());
-                service.waitForBytesWritten(2000);
-                // The reply is read but not trusted, and not shown: `usbipd list` is the
-                // authority on what is actually shared, and that is what the next refresh()
-                // reads. It is also why a device stuck busy still reads "not shared yet"
-                // rather than done.
-                service.waitForReadyRead(3000);
-                service.disconnectFromServer();
-            }
-        }
-#else
-        QProcess proc;
-        // pkexec, not the helper directly. The helper refuses to act without administrator
-        // rights, and this is how it gets them. It does not prompt: the polkit action placed by
-        // the one-time setup grants the active session exactly this one program, which is what
-        // that action exists for. canShare requires the action to be present, so the case where
-        // pkexec would fall back to asking on every toggle cannot arise here.
-        QStringList helperArgs{ QLatin1String(kHelperPathLinux), QStringLiteral("reconcile") };
-        for (const auto &busid : busids) {
-            helperArgs << QStringLiteral("--want") << busid;
-        }
-        for (const auto &entry : m_Devices) {
-            helperArgs << QStringLiteral("--local")
-                       << entry.toMap().value(QStringLiteral("busid")).toString();
-        }
-        proc.start(QStringLiteral("pkexec"), helperArgs);
-        // The exit is checked, not ignored. A pkexec that refused — no policy, no session,
-        // helper not where we think it is — used to leave exactly the same mark as a bind
-        // that had merely not landed yet, so the row read "Not shared yet" for as long as
-        // anyone cared to look. Silence on this side is how a request that never ran passes
-        // for one still in flight.
-        if (!proc.waitForFinished(4000)
-            || proc.exitStatus() != QProcess::NormalExit
-            || proc.exitCode() != 0) {
-            m_ToggleFailure = tr("The input service refused the request for %1.").arg(busid);
-        }
-#endif
-    }
+    reconcileWithService(busids, true);
 
     /*
      * Re-read, not re-mark.
@@ -603,6 +658,107 @@ void UsbIpDevices::setWanted(const QString &busid, bool wanted)
      */
     refresh();
     scheduleSettle();
+}
+
+/*
+ * Ask the service to reconcile, and let it say what it found.
+ *
+ * Lifted out of setWanted because it has a second caller now: the app also calls this when a
+ * machine starts streaming here. See watchForPeer() — the firewall rule is opened for a
+ * machine only once that machine is actually streaming, and that moment is not one the app is
+ * told about, so it has to look for it. Before this the rule could only ever be opened by the
+ * user toggling a second time, which is a thing to do to a person rather than a design.
+ *
+ * isUserToggle decides whether a refusal is reported as a failed toggle. A poll that could not
+ * open the connection is already described by the reachability line on the same screen, and
+ * saying it twice — once as a fault against a device the user never touched — is worse.
+ */
+bool UsbIpDevices::reconcileWithService(const QStringList &busids, bool isUserToggle)
+{
+    if (!m_CanShare) {
+        return false;
+    }
+
+#ifdef Q_OS_WIN32
+    /*
+     * The service is reached over its own local pipe — not through `sc start`, because a
+     * service that is already running refuses a start (error 1056), so start arguments
+     * could only ever deliver the first desired set and never another one.
+     *
+     * The PLAN is built here rather than in the service. This is the side that parses
+     * usbipd's table, so this is the side that knows what needs releasing — one parser in
+     * the product, and it is the one with tests. The service executes and refuses; it does
+     * not decide.
+     */
+    QStringList tokens;
+    for (const auto &entry : m_Devices) {
+        const QVariantMap row = entry.toMap();
+        const QString busid = row.value(QStringLiteral("busid")).toString();
+        if (busid.isEmpty()) {
+            continue;
+        }
+        const bool want = busids.contains(busid);
+        const bool shared = row.value(QStringLiteral("shared")).toBool();
+        if (want && !shared) {
+            tokens << (QStringLiteral("+") + busid);
+        }
+        else if (!want && shared) {
+            tokens << (QStringLiteral("-") + busid);
+        }
+    }
+
+    bool ran = tokens.isEmpty();
+    if (!tokens.isEmpty()) {
+        QLocalSocket service;
+        // Qt maps this onto \\.\pipe\ArtMoonInputService on Windows.
+        service.connectToServer(QStringLiteral("ArtMoonInputService"));
+        if (service.waitForConnected(2000)) {
+            service.write(QStringLiteral("reconcile %1\n")
+                              .arg(tokens.join(QLatin1Char(' '))).toUtf8());
+            service.waitForBytesWritten(2000);
+            // The reply is read but not trusted, and not shown: `usbipd list` is the
+            // authority on what is actually shared, and that is what the next refresh()
+            // reads. It is also why a device stuck busy still reads "not shared yet"
+            // rather than done.
+            service.waitForReadyRead(3000);
+            service.disconnectFromServer();
+            ran = true;
+        }
+    }
+    return ran;
+#else
+    QProcess proc;
+    // pkexec, not the helper directly. The helper refuses to act without administrator
+    // rights, and this is how it gets them. It does not prompt: the polkit action placed by
+    // the one-time setup grants the active session exactly this one program, which is what
+    // that action exists for. canShare requires the action to be present, so the case where
+    // pkexec would fall back to asking on every toggle cannot arise here.
+    QStringList helperArgs{ QLatin1String(kHelperPathLinux), QStringLiteral("reconcile") };
+    for (const auto &busid : busids) {
+        helperArgs << QStringLiteral("--want") << busid;
+    }
+    for (const auto &entry : m_Devices) {
+        helperArgs << QStringLiteral("--local")
+                   << entry.toMap().value(QStringLiteral("busid")).toString();
+    }
+    proc.start(QStringLiteral("pkexec"), helperArgs);
+    // The exit is checked, not ignored. A pkexec that refused — no policy, no session,
+    // helper not where we think it is — used to leave exactly the same mark as a bind
+    // that had merely not landed yet, so the row read "Not shared yet" for as long as
+    // anyone cared to look. Silence on this side is how a request that never ran passes
+    // for one still in flight.
+    const bool ran = proc.waitForFinished(4000)
+                     && proc.exitStatus() == QProcess::NormalExit
+                     && proc.exitCode() == 0;
+    if (!ran && isUserToggle) {
+        // The wanted list, not one busid: this method serves both the toggle and the peer
+        // watch, and what was refused is the request, which may name more than one.
+        m_ToggleFailure = tr("ArtMoon's sharing helper refused the request, so %1 could not "
+                             "be switched on. Run setup from this screen, then try again.")
+                              .arg(busids.join(QStringLiteral(", ")));
+    }
+    return ran;
+#endif
 }
 
 /*
@@ -669,14 +825,14 @@ QString UsbIpDevices::describeToggleFailure() const
     QLocalSocket probe;
     probe.connectToServer(QLatin1String(kServiceNameWindows));
     if (!probe.waitForConnected(1500)) {
-        return tr("The ArtMoon input service is installed but is not answering, so %1 could "
-                  "not be shared. Sharing a device needs that service running.").arg(names);
+        return tr("%1 could not be switched on because ArtMoon's sharing helper is not "
+                  "responding. Restart ArtMoon to start it again.").arg(names);
     }
     probe.disconnectFromServer();
 #endif
 
-    return tr("The input service was asked about %1 and the device did not change. It can be "
-              "toggled again.").arg(names);
+    return tr("%1 did not switch on. If something on this PC is using it, close that first, "
+              "then try again.").arg(names);
 }
 
 /* True while any device's label disagrees with the machine. */
@@ -837,8 +993,10 @@ void UsbIpDevices::installInputService()
                 QFile::permissions(placement.bundled) & QFileDevice::ExeOwner;
             note = (wantedRunnable && QFileInfo(staged).exists()
                     && !QFileInfo(staged).isExecutable())
-                ? tr("Not set up — %1 was staged without permission to run.").arg(placement.label)
-                : tr("Not set up — %1 could not be prepared from this build.").arg(placement.label);
+                ? tr("Not set up — %1 could not be made ready to run. This is a fault in "
+                     "ArtMoon, not something you did.").arg(placement.label)
+                : tr("Not set up — %1 could not be copied out of this build. This is a fault in "
+                     "ArtMoon, not something you did.").arg(placement.label);
             prepared = false;
             break;
         }
@@ -870,15 +1028,23 @@ void UsbIpDevices::installInputService()
         const int code = proc.exitCode();
         if (code == 126 || code == 127) {
             // pkexec's own meanings: 126 covers a dismissed prompt *and* a program it could not
-            // exec; 127 is a program it could not find. The staging loop above now refuses a
-            // payload we could not run, so a missing execute bit cannot reach this line — which
-            // makes a closed dialog the likeliest cause, but not the only one.
-            note = tr("Not set up — the password prompt was closed, or the components could not be run.");
+            // exec; 127 is a program it could not find.
+            //
+            // This sentence used to name only the dismissed prompt, and so told a user their
+            // password was the problem when the failure was inside ArtMoon. Measured on the
+            // exporter 2026-10-04: the helper was staged without its execute bit, pkexec
+            // authorised correctly, could not exec the file, exited 126, and this is the line
+            // that was shown. Both causes are named now, and the second one says whose it is.
+            note = tr("Not set up — ArtMoon could not start the sharing components. If you "
+                      "closed the password prompt, try again; if you did not, this is a fault in "
+                      "ArtMoon.");
         } else if (code != 0) {
-            const QString err = QString::fromLocal8Bit(proc.readAllStandardError()).trimmed();
-            note = err.isEmpty()
-                ? tr("Not set up — the sharing components could not be installed.")
-                : err.split(QLatin1Char('\n')).first().trimmed();
+            // The helper's own stderr is a developer's sentence, not a user's: it is prefixed
+            // with the program name and names paths. It used to be shown verbatim here. Say what
+            // happened in words a person can act on, and leave the detail in the journal where
+            // whoever reads it can see the whole line.
+            note = tr("Not set up — the sharing components could not be installed. This is a "
+                      "fault in ArtMoon, not something you did.");
         }
     }
 
@@ -891,15 +1057,18 @@ void UsbIpDevices::installInputService()
         const QFileInfo installed{placement.destination};
         const QString want = fileSha256(placement.bundled);
         if (!installed.exists()) {
-            note = tr("Not set up — %1 is missing after a successful setup.").arg(placement.label);
+            note = tr("Not set up — %1 did not arrive. This is a fault in ArtMoon, not "
+                      "something you did.").arg(placement.label);
             break;
         }
         if (!want.isEmpty() && fileSha256(placement.destination) != want) {
-            note = tr("Not set up — the installed %1 does not match this build.").arg(placement.label);
+            note = tr("Not set up — %1 was installed, but it is not the one this ArtMoon "
+                      "expected. This is a fault in ArtMoon.").arg(placement.label);
             break;
         }
         if (installed.ownerId() != 0) {
-            note = tr("Not set up — the installed %1 is not owned by root.").arg(placement.label);
+            note = tr("Not set up — %1 was installed but does not belong to the system. This "
+                      "is a fault in ArtMoon.").arg(placement.label);
             break;
         }
     }

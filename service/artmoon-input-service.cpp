@@ -1195,8 +1195,8 @@ int main(int argc, char **argv)
     // sharing is what gets made true.
     if (!wantList.empty()) {
         if (!ensureDaemon()) {
-            std::cerr << "could not start the USB/IP service, so no other machine can reach this "
-                         "one. Devices will still be offered locally.\n";
+            std::cerr << "the sharing service could not be started, so nothing switched on here "
+                         "can be reached. Restart ArtMoon to try again.\n";
             // Deliberately not fatal: the bind below is still worth doing, and the app reports
             // the listener separately through `status`. Failing here would turn a reachability
             // problem into a feature that looks entirely broken.
@@ -1221,7 +1221,7 @@ int main(int argc, char **argv)
         if (peer.found) {
             revokeStaleRules(peer.address, firewall);
             if (!allowPortFor(peer.address, firewall)) {
-                std::cerr << "could not open port 3240 for " << peer.address << "\n";
+                std::cerr << "could not open the connection for " << peer.address << "\n";
             }
         } else {
             // We will not open a port for a machine we cannot name, and "anywhere" is a different
@@ -1230,9 +1230,8 @@ int main(int argc, char **argv)
             // nothing is being shared, or nothing is connected to be served.
             revokeStaleRules(std::string(), firewall);
             if (!wantList.empty()) {
-                std::cerr << "no client is connected, so the firewall has not been opened for "
-                             "one. Start a session from the other machine, then toggle sharing "
-                             "again.\n";
+                std::cerr << "waiting for the other machine — the connection opens by itself "
+                             "when a stream to this PC starts.\n";
             }
         }
     }
