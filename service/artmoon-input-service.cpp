@@ -572,19 +572,31 @@ bool ensureDaemon()
 // port standing open for a machine that finished with us hours ago — and one more of them every
 // time sharing is toggled. See the firewall half of reconcile().
 
-// The ports a client connects TO when it is in a session with us. Taken from the product's own
-// address definitions rather than chosen here. The video and audio ports are UDP and so never
-// appear in the tables below; only the control and RTSP ports can match.
+// The ports a connection from ArtMoon to its host can land on while that host is the machine we
+// are about to serve. Taken from the product's own address definitions rather than chosen here.
+// The video and audio ports are UDP and so never appear in the tables below.
 //
-// 47984 and 47989 are deliberately NOT in this list, even though they are the product's own HTTPS
-// and HTTP ports. ArtMoon connects to both of them to draw the host and its app list — a glance,
-// not a session — and it opens and closes that connection every couple of seconds for as long as
-// the app is open. Counting a glance here made it read as "a stream just started": the helper
-// bound the device, the poll closed, the next read released it, and the export flapped on and off
-// underneath the user. A real session is seen on 48010 — measured live on the exporter 2026-10-04,
-// where a stream held an ESTABLISHED connection to it — and 48002 is kept as the other
-// session-time control port. So: only ports a session holds belong here, never ports a poll opens.
-const int kStreamingPorts[] = { 48002, 48010 };
+// 47984 and 47989 belong here, and the reason is timing rather than tidiness. ArtMoon opens them
+// to draw the host and its app list — a glance, not a session — and it does so BEFORE any session
+// exists, which makes it the only advance notice this machine gets that a stream may be started
+// at us. That notice is load-bearing twice over:
+//
+//   * the firewall rule has to be open before the far end asks what is offered. It asks at the
+//     moment its session begins, not after, so a rule written when the session appears is written
+//     too late — every time.
+//   * the bind is what makes a device offerable at all, and the far end reaches for it as its
+//     session starts.
+//
+// Measured on the exporter 2026-10-04: with these two left out, the port was shut when the host
+// asked and the host answered itself with "the exporter has nothing to offer: no output came
+// back". The device was never seen and no stream could take it. Removed once, put back once; this
+// note stays because the next person to read the list will have the same tidy idea.
+//
+// A glance opens and closes every couple of seconds, so the list does blink. That is the app's
+// business and the app's fix: it holds a peer it has seen for kPeerGraceMs instead of believing
+// each look in isolation. Do NOT answer the blink by deleting these ports — that answer takes the
+// hand-off with it.
+const int kStreamingPorts[] = { 47984, 47989, 48002, 48010 };
 
 // The marker our own rules carry, so a rule of the user's is never mistaken for one of ours.
 const char *kRuleMarker = "artmoon-device-sharing";

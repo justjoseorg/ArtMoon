@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QElapsedTimer>
 #include <QObject>
 #include <QString>
 #include <QTimer>
@@ -209,6 +210,7 @@ private:
 
     /* Repeating, and only while something is switched on. See watchForPeer(). */
     QTimer m_PeerTimer;
+    QElapsedTimer m_PeerSeen;     /* when the helper last named a peer; see kPeerGraceMs */
     QString m_ReachablePeer;      /* as last reported by the helper, empty when unreachable */
     QString m_LastPeer;           /* the one the attempts below belong to */
     QString m_OpenedForPeer;      /* the one we have already opened the connection for */

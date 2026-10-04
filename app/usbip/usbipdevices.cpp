@@ -104,6 +104,23 @@ constexpr int kPeerWaitIntervalMs = 1000;
  * connection that did not open.
  */
 constexpr int kPeerAttempts = 3;
+
+/*
+ * How long a peer the helper has named is still believed to be there, after a look that does not
+ * name one.
+ *
+ * The helper is asked every second or two while a device is switched on, and the connection it
+ * names comes and goes on a shorter cycle than that: ArtMoon opens and closes its look at the
+ * host every couple of seconds. Believing each look on its own made everything downstream flap on
+ * that cycle — the firewall rule was written and taken away again, the bind was handed back and
+ * redone, and the word in the list went Shared / Not shared yet / Shared while the person watched
+ * it. The connection to the far end is the same connection either way, so the only thing the flap
+ * was buying was churn.
+ *
+ * Fifteen seconds bridges the look's own cycle several times over, and is short enough that a peer
+ * which really has gone — the other machine closed, or stopped streaming — is let go promptly.
+ */
+constexpr int kPeerGraceMs = 15000;
 constexpr int kSettleTries      = 6;
 
 /* Platform tool that enumerates. `usbipd` is not on PATH by default on Windows. */
@@ -503,8 +520,8 @@ void UsbIpDevices::refresh()
      * firewall, so the answer and the action cannot drift apart.
      */
     m_ReachabilityReason.clear();
-    m_ReachablePeer.clear();
 #ifndef Q_OS_WIN32
+    bool sawPeer = false;
     if (m_CanShare) {
         QProcess helper;
         helper.start(QLatin1String(kHelperPathLinux), { QStringLiteral("status") });
@@ -513,10 +530,14 @@ void UsbIpDevices::refresh()
             const QStringList lines = output.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
             for (const QString &line : lines) {
                 // The reachable case is the one that matters to the machine, not the screen:
-                // it is the moment a streaming peer exists, and therefore the moment the
-                // firewall rule may be opened. Read it here, act on it in watchForPeer().
+                // it is the moment this machine can name the one that may start streaming at us,
+                // and therefore the moment the firewall rule may be opened and the bind becomes
+                // worth doing. Read it here, act on it in watchForPeer(). Note this is NOT the
+                // moment a session exists — it arrives before one, which is the whole point.
                 if (line.startsWith(QLatin1String("reachable:"))) {
                     m_ReachablePeer = line.mid(10).trimmed();
+                    m_PeerSeen.restart();
+                    sawPeer = true;
                     continue;
                 }
                 if (!line.startsWith(QLatin1String("unreachable:"))) {
@@ -572,6 +593,17 @@ void UsbIpDevices::refresh()
             }
         }
     }
+
+    // The falling edge, with the grace applied. See kPeerGraceMs: a peer is only gone once it has
+    // been gone for a while, not the first time a look happens to miss it.
+    if (!m_CanShare) {
+        m_ReachablePeer.clear();
+        m_PeerSeen.invalidate();
+    } else if (!sawPeer && (!m_PeerSeen.isValid() || m_PeerSeen.hasExpired(kPeerGraceMs))) {
+        m_ReachablePeer.clear();
+    }
+#else
+    m_ReachablePeer.clear();
 #endif
 
 #ifdef Q_OS_WIN32
