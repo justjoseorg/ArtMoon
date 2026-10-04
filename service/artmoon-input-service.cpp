@@ -76,6 +76,12 @@ namespace {
 // normal state, and NOT an error. Same source of truth as UsbIpDevices::refresh().
 const char *kUsbIpHostDriver = "/sys/bus/usb/drivers/usbip-host";
 
+// The usbip ArtMoon ships, if the user's copy has placed it. It gets a directory of its own
+// because it is two files and not one: usbip links against libusbip.so.0, which travels
+// beside it. Which copy actually runs is decided in usbipProgram().
+const char *kUsbipBundledDir  = "/usr/libexec/artmoon-usbip";
+const char *kUsbipBundledPath = "/usr/libexec/artmoon-usbip/usbip";
+
 // ── the plan ─────────────────────────────────────────────────────────────────────
 
 struct Plan {
@@ -288,12 +294,34 @@ ProcessResult runProcess(const std::vector<std::string> &argv)
 
 // ── the platform verbs ───────────────────────────────────────────────────────────
 
+#ifndef _WIN32
+// Which usbip to run, as a path rather than a bare name.
+//
+// The host's own first. A distro's usbip is built with the kernel that distro ships, and this
+// helper runs on machines whose kernel we have never seen — so where there is a matched pair,
+// that pair is the better tool. Ours is the fallback, and it is here for the one case this
+// bundle exists for: a machine with no usbip on it at all.
+//
+// The bare name at the end is for a distro that keeps it somewhere other than /usr/bin. It is
+// still not the caller's choice: PATH is set to a literal list in main(), before anything runs.
+std::string usbipProgram()
+{
+    if (access("/usr/bin/usbip", X_OK) == 0) {
+        return "/usr/bin/usbip";
+    }
+    if (access(kUsbipBundledPath, X_OK) == 0) {
+        return kUsbipBundledPath;
+    }
+    return "usbip";
+}
+#endif
+
 std::vector<std::string> bindCommand(const std::string &busid)
 {
 #ifdef _WIN32
     return { "usbipd", "bind", "--busid", busid };
 #else
-    return { "usbip", "bind", "-b", busid };
+    return { usbipProgram(), "bind", "-b", busid };
 #endif
 }
 
@@ -302,7 +330,7 @@ std::vector<std::string> unbindCommand(const std::string &busid)
 #ifdef _WIN32
     return { "usbipd", "unbind", "--busid", busid };
 #else
-    return { "usbip", "unbind", "-b", busid };
+    return { usbipProgram(), "unbind", "-b", busid };
 #endif
 }
 
@@ -357,6 +385,17 @@ int main(int argc, char **argv)
     // setenv(..., 1) so it applies whether or not the caller set a PATH, and it sits above
     // the argument parsing so no path through this program can precede it.
     setenv("PATH", "/usr/sbin:/usr/bin:/sbin:/bin", 1);
+
+#ifndef _WIN32
+    // Same reasoning, for our own usbip. That copy is two files in one directory — the binary
+    // and the libusbip.so.0 it links against — and it is a copied host binary rather than one
+    // we compiled, so it carries no rpath of ours. The loader therefore has to be told where
+    // "beside it" is. Set only when our copy is actually present, so a machine running its own
+    // usbip keeps its own library resolution exactly as it was.
+    if (access(kUsbipBundledPath, X_OK) == 0) {
+        setenv("LD_LIBRARY_PATH", kUsbipBundledDir, 1);
+    }
+#endif
 
     std::vector<std::string> args(argv + 1, argv + argc);
 

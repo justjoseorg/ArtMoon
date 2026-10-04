@@ -140,6 +140,8 @@ private:
     void storeWantedBusids(const QStringList &busids);
     static QString bundledHelperPath();
     static QString bundledPolicyPath();
+    static QString bundledUsbipPath();
+    static QString bundledUsbipLibPath();
 
     /* The bounded second look after a toggle. See scheduleSettle() in the .cpp. */
     void scheduleSettle();

@@ -43,6 +43,21 @@ const char *kHelperPathLinux    = "/usr/libexec/artmoon-input-service";
 const char *kPolicyPathLinux    = "/usr/share/polkit-1/actions/org.artmoon.input-service.policy";
 
 /*
+ * The usbip client ArtMoon ships for Linux, and the library it links against.
+ *
+ * They get a directory of their own rather than sitting in /usr/libexec beside the helper,
+ * because there are two of them and one of them is a library: libusbip.so.0 parked directly
+ * in libexec would be a globally-named shared object in a place nothing expects one.
+ *
+ * Nothing here is invented — these are the paths the helper looks in, in
+ * service/artmoon-input-service.cpp. The two must agree, which is why the AppImage build
+ * cross-checks the helper's bundled paths the way it already cross-checks the polkit action's.
+ */
+const char *kUsbipDirLinux      = "/usr/libexec/artmoon-usbip";
+const char *kUsbipBinLinux      = "/usr/libexec/artmoon-usbip/usbip";
+const char *kUsbipLibLinux      = "/usr/libexec/artmoon-usbip/libusbip.so.0";
+
+/*
  * The bounded second look after a toggle. See scheduleSettle().
  *
  * A bind is not finished when pkexec exits, so the re-read that follows a toggle can still
@@ -62,6 +77,21 @@ QString usbipdProgram()
     }
     return QStandardPaths::findExecutable(QStringLiteral("usbipd"));
 #else
+    // The same order the helper uses when it binds, and deliberately so: the list this
+    // produces and the bind that follows it should never come from two different tools.
+    // The host's first, because a distro's usbip is built with the kernel that distro ships;
+    // then the copy ArtMoon placed; then PATH, for a distro that keeps it somewhere else.
+    //
+    // That middle one is the whole point of shipping it. Before it, a machine with no usbip
+    // read as "USB/IP is not installed on this PC" and nothing below could enumerate — the
+    // toggle was there, the list was empty, and there was nothing a user could do about it.
+    const QString host = QStringLiteral("/usr/bin/usbip");
+    if (QFileInfo(host).isExecutable()) {
+        return host;
+    }
+    if (QFileInfo(QLatin1String(kUsbipBinLinux)).isExecutable()) {
+        return QLatin1String(kUsbipBinLinux);
+    }
     return QStandardPaths::findExecutable(QStringLiteral("usbip"));
 #endif
 }
@@ -163,6 +193,31 @@ QString UsbIpDevices::bundledHelperPath()
  * ArtMoon resolves this to the real system path and the app can tell "not set up" from "set up"
  * by looking at the filesystem instead of by remembering.
  */
+/*
+ * Where the shipped usbip sits in this build — the same relative relationship as the helper
+ * and the action above, for the same reason. usr/libexec/artmoon-usbip in the image becomes
+ * /usr/libexec/artmoon-usbip on the system, so placing it is a copy and not a remapping.
+ */
+QString UsbIpDevices::bundledUsbipPath()
+{
+#ifdef Q_OS_WIN32
+    return QString();
+#else
+    const QDir appDir(QCoreApplication::applicationDirPath());
+    return appDir.absoluteFilePath(QStringLiteral("../libexec/artmoon-usbip/usbip"));
+#endif
+}
+
+QString UsbIpDevices::bundledUsbipLibPath()
+{
+#ifdef Q_OS_WIN32
+    return QString();
+#else
+    const QDir appDir(QCoreApplication::applicationDirPath());
+    return appDir.absoluteFilePath(QStringLiteral("../libexec/artmoon-usbip/libusbip.so.0"));
+#endif
+}
+
 QString UsbIpDevices::bundledPolicyPath()
 {
 #ifdef Q_OS_WIN32
@@ -603,11 +658,19 @@ void UsbIpDevices::installInputService()
             : qEnvironmentVariable("XDG_RUNTIME_DIR") + QStringLiteral("/artmoon-install-XXXXXX")};
 
     /*
-     * Two files go down, one approval each: the helper, and the polkit action that lets the app
-     * reach it later without a password prompt on every toggle. They belong in the same step
-     * because the action is the very thing being granted — installing the helper without it
-     * would leave a feature that works by asking for a password every time, which is worse than
-     * one that is obviously broken.
+     * Four files go down, one approval each: the helper; the polkit action that lets the app
+     * reach it later without a password prompt on every toggle; and the usbip client with the
+     * library it links against.
+     *
+     * The action and the helper belong in the same step because the action is the very thing
+     * being granted — installing the helper without it would leave a feature that works by
+     * asking for a password every time, which is worse than one that is obviously broken.
+     *
+     * usbip is here for a plainer reason. The helper exports a device by running `usbip bind`,
+     * and until now that tool was assumed to be on the host. On a machine that has never heard
+     * of USB/IP it is not, and the feature looks broken rather than absent. The helper prefers
+     * the host's own copy when there is one, so placing ours takes nothing away from a machine
+     * that already had it.
      */
     struct Placement {
         QString bundled;
@@ -622,6 +685,10 @@ void UsbIpDevices::installInputService()
           QLatin1String(kHelperPathLinux), QStringLiteral("0755"), tr("the input service") },
         { bundledPolicyPath(), QStringLiteral("org.artmoon.input-service.policy"),
           QLatin1String(kPolicyPathLinux), QStringLiteral("0644"), tr("the permission rule") },
+        { bundledUsbipPath(), QStringLiteral("usbip"),
+          QLatin1String(kUsbipBinLinux), QStringLiteral("0755"), tr("the USB/IP tool") },
+        { bundledUsbipLibPath(), QStringLiteral("libusbip.so.0"),
+          QLatin1String(kUsbipLibLinux), QStringLiteral("0644"), tr("its library") },
     };
 
     for (const Placement &placement : placements) {
@@ -650,6 +717,10 @@ void UsbIpDevices::installInputService()
         QProcess proc;
         proc.start(QStringLiteral("pkexec"),
                    { QStringLiteral("install"),
+                     // -D creates the leading directories. It is a no-op where they already
+                     // exist, which is every destination but the one this change adds, so it
+                     // costs nothing to have it on all of them rather than on one.
+                     QStringLiteral("-D"),
                      QStringLiteral("-m"), placement.mode,
                      QStringLiteral("-o"), QStringLiteral("root"),
                      QStringLiteral("-g"), QStringLiteral("root"),

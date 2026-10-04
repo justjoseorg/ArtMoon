@@ -140,6 +140,42 @@ python3 -c "import xml.etree.ElementTree as E,sys; E.parse(sys.argv[1])" \
     || fail "The polkit action is not valid XML - polkit would ignore it and prompt every time"
 echo "Input service polkit action bundled and cross-checked against the helper path"
 
+# The usbip client, and the library it links against.
+#
+# ArtMoon exports a device by running `usbip bind`. Until now that tool was assumed to be on
+# the host, and on a fresh machine it is not - which is the one failure that looks like the
+# feature being broken rather than a package being absent. So it ships with us.
+#
+# TWO files, not one: usbip links libusbip.so.0, which the host's copy would otherwise supply
+# from wherever it lives. libudev and libc are deliberately NOT carried - every system able to
+# run this app has both, and putting a libc inside a root-owned tool is how you get a loader
+# that will not start.
+#
+# The helper prefers the host's usbip when there is one, because a distro's tool is built with
+# the kernel that distro ships and that is a matched pair we cannot beat. This copy is the
+# fallback, for the machine that has none.
+echo Bundling the usbip client
+USBIP_SRC=$(command -v usbip) \
+    || fail "usbip not found in the build container - the AppImage would ship without it (jammy: apt-get install linux-tools-common)"
+mkdir -p "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip"
+cp "$USBIP_SRC" "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbip" \
+    || fail "Failed to bundle usbip"
+USBIP_LIB=$(ldd "$USBIP_SRC" | awk '/libusbip\.so/ { print $3; exit }')
+[ -n "$USBIP_LIB" ] && [ -f "$USBIP_LIB" ] \
+    || fail "usbip links no usable libusbip.so - the bundled copy would not start on a host that has none"
+cp "$USBIP_LIB" "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/libusbip.so.0" \
+    || fail "Failed to bundle libusbip.so.0"
+chmod 755 "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbip"
+chmod 644 "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/libusbip.so.0"
+# Prove the pair runs FROM WHERE IT NOW SITS, with nothing but what a host without usbip would
+# have. A copy that cannot start is precisely the failure nobody would see until a user pressed
+# a toggle - and note the subcommand: `usbip version`, not `usbip --version`, which exits
+# non-zero with "invalid option" and would fail this gate on a perfectly good binary.
+USBIP_BUNDLED_VERSION=$(LD_LIBRARY_PATH="$DEPLOY_FOLDER/usr/libexec/artmoon-usbip" \
+    "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbip" version 2>&1) \
+    || fail "The bundled usbip cannot run - its library or the loader is wrong"
+echo "usbip bundled and runnable: $USBIP_BUNDLED_VERSION"
+
 # Pre-seed the QML modules the app imports but linuxdeploy-plugin-qt's bundle
 # step has historically missed when the host's Qt install lacks them (the 1.0.0
 # AppImage shipped without QtQuick/Shapes and bounced on launch on every

@@ -66,7 +66,8 @@ jobs:
             sudo git wget curl ca-certificates \
             build-essential cmake ninja-build pkgconf \
             python3 python3-pip python-is-python3 \
-            bison flex file libssl-dev zlib1g-dev
+            bison flex file libssl-dev zlib1g-dev \
+            linux-tools-common
           # python-is-python3: shaderc's build script (built from source below) is
           # invoked as `env python`, and jammy has no bare `python`.
           # file: on every runner image, absent from bare jammy; linuxdeploy uses it to
@@ -80,6 +81,12 @@ jobs:
           # jammy's is OpenSSL 3.0.2, which is what aqt's Qt 6.8.3 was built against.
           # zlib1g-dev: same argument, added in the same breath rather than spending a
           # second 12-minute run discovering it. It cannot reject anything.
+          # linux-tools-common: it is what ships /usr/bin/usbip on Ubuntu, and the AppImage
+          # build now bundles that tool so a machine without one still has it. Note the name:
+          # there is no `usbip` package on Ubuntu at all, and asking for one is a 40-minute
+          # build that dies at apt. (Arch calls it `usbip`, Fedora calls it `usbip`, Debian
+          # calls it `usbip` — Ubuntu is the odd one out, which is exactly why this is written
+          # down here rather than remembered.)
           # pkgconf, NOT pkg-config — a behavioural difference, not a rename. jammy's
           # `pkg-config` is the classic 0.29.2, which does not implement the `Provides:`
           # field; jammy's `pkgconf` does, and installing it takes over

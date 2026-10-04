@@ -58,8 +58,11 @@ anything.
 
 ## Requirements each product carries
 
-- **ArtMoon (exporter):** local device enumeration, the toggle UI, and a privileged local service to bind. Needs
-  only that service — nothing on any other machine.
+- **ArtMoon (exporter):** local device enumeration, the toggle UI, and a privileged local service to bind. It
+  also needs the `usbip` client and the `usbip-host` kernel module **on its own machine** — the service exports a
+  device by calling `usbip bind`, so a machine without that tool can export nothing, however good the UI is.
+  Since 1.8.0 the client ships inside the Linux AppImage and the Windows installer, so only the kernel module is
+  left to the host; the helper loads it, and says so plainly when it cannot.
 - **ArtLight (importer):** a USB/IP client stack on the host machine — the UDE driver on Windows, `usbip` +
   `vhci-hcd` on Linux. This is ArtLight's own dependency, not ArtMoon's.
 
