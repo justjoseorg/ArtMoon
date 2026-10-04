@@ -329,6 +329,39 @@ rm -rf "$STAGE"
 # directory this app staged". A real first run is never the shape above: pkexec switches fully to
 # root and hands the caller's uid over in PKEXEC_UID, so the process is root while the directory
 # belongs to a person. That shape, and the security property that rests on it, are these checks.
+#
+# The app's own staging rule, replicated — including where the execute bit comes from.
+#
+# The app copied every file into a 0700 directory and then set 0600 on all of them, including the
+# helper, which is the one file that is going to be *run*. pkexec authorised correctly, logged the
+# command, failed to exec the file, and exited 126 — the same code it uses for a dismissed prompt,
+# so the app told the user their password dialog had been closed and set nothing up.
+#
+# Nothing above could catch that. This gate runs the helper out of the deploy folder, where it is
+# already executable, and never stages it the way the app does. So stage it the app's way, and run
+# it from there.
+APP_STAGE=$(mktemp -d /tmp/artmoon-install-XXXXXX) || fail "could not make a staging directory"
+chmod 700 "$APP_STAGE"
+stage_like_the_app() {
+    cp "$1" "$APP_STAGE/$2"
+    if [ -x "$1" ]; then chmod 700 "$APP_STAGE/$2"; else chmod 600 "$APP_STAGE/$2"; fi
+}
+stage_like_the_app "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" \
+                   artmoon-input-service
+stage_like_the_app "$DEPLOY_FOLDER/usr/share/polkit-1/actions/org.artmoon.input-service.policy" \
+                   org.artmoon.input-service.policy
+stage_like_the_app "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbip"         usbip
+stage_like_the_app "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/libusbip.so.0" libusbip.so.0
+stage_like_the_app "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbipd"        usbipd
+[ -x "$APP_STAGE/artmoon-input-service" ] \
+    || fail "the helper would be staged without permission to run"
+chown -R 1000:1000 "$APP_STAGE"
+PKEXEC_UID=1000 "$APP_STAGE/artmoon-input-service" install --from "$APP_STAGE" >/dev/null \
+    || fail "the helper could not be run from a directory staged the way the app stages it"
+[ "$(stat -c '%a' /usr/libexec/artmoon-usbip/usbipd)" = "755" ] \
+    || fail "the sharing service did not land executable"
+rm -rf "$APP_STAGE"
+
 PKEXEC_CASE=$(mktemp -d /tmp/artmoon-install-XXXXXX) || fail "could not make a staging directory"
 chmod 700 "$PKEXEC_CASE"
 cp "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service"        "$PKEXEC_CASE/artmoon-input-service"

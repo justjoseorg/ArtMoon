@@ -788,14 +788,36 @@ void UsbIpDevices::installInputService()
             if (in.open(QIODevice::ReadOnly) && out.open(QIODevice::WriteOnly)) {
                 const qint64 written = out.write(in.readAll());
                 out.close();
-                QFile::setPermissions(staged, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+                /*
+                 * Take the execute bit from the file being copied, never from a list of names.
+                 *
+                 * This used to set 0600 on every staged file, including the helper — which is the
+                 * one file here that is going to be *run*. pkexec then authorised correctly, logged
+                 * the command, and failed to exec the file it had just been handed, exiting 126:
+                 * the same code it uses for a dismissed prompt. So the first run looked exactly
+                 * like a closed password dialog, said so on screen, and set nothing up. Whatever is
+                 * executable in the build is executable here, and this rule cannot drift from the
+                 * payload the way a name list would.
+                 */
+                QFile::Permissions wanted = QFileDevice::ReadOwner | QFileDevice::WriteOwner;
+                if (QFile::permissions(placement.bundled) & QFileDevice::ExeOwner) {
+                    wanted |= QFileDevice::ExeOwner;
+                }
+                QFile::setPermissions(staged, wanted);
                 stagedOk = written > 0
-                           && QFileInfo(staged).size() == QFileInfo(placement.bundled).size();
+                           && QFileInfo(staged).size() == QFileInfo(placement.bundled).size()
+                           && (!(QFile::permissions(placement.bundled) & QFileDevice::ExeOwner)
+                               || QFileInfo(staged).isExecutable());
             }
         }
 
         if (!stagedOk) {
-            note = tr("Not set up — %1 could not be prepared from this build.").arg(placement.label);
+            const bool wantedRunnable =
+                QFile::permissions(placement.bundled) & QFileDevice::ExeOwner;
+            note = (wantedRunnable && QFileInfo(staged).exists()
+                    && !QFileInfo(staged).isExecutable())
+                ? tr("Not set up — %1 was staged without permission to run.").arg(placement.label)
+                : tr("Not set up — %1 could not be prepared from this build.").arg(placement.label);
             prepared = false;
             break;
         }
@@ -826,8 +848,11 @@ void UsbIpDevices::installInputService()
 
         const int code = proc.exitCode();
         if (code == 126 || code == 127) {
-            // pkexec's own meanings: the prompt was dismissed, or this user may not authenticate.
-            note = tr("Not set up — the password prompt was closed.");
+            // pkexec's own meanings: 126 covers a dismissed prompt *and* a program it could not
+            // exec; 127 is a program it could not find. The staging loop above now refuses a
+            // payload we could not run, so a missing execute bit cannot reach this line — which
+            // makes a closed dialog the likeliest cause, but not the only one.
+            note = tr("Not set up — the password prompt was closed, or the components could not be run.");
         } else if (code != 0) {
             const QString err = QString::fromLocal8Bit(proc.readAllStandardError()).trimmed();
             note = err.isEmpty()
