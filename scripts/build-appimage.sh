@@ -222,6 +222,46 @@ USBIP_BUNDLED_VERSION=$(env -u LD_LIBRARY_PATH "$DEPLOY_FOLDER/usr/libexec/artmo
     || fail "The bundled usbip cannot run with a clean environment - its rpath or the loader is wrong"
 echo "usbip bundled and runnable: $USBIP_BUNDLED_VERSION"
 
+# The DAEMON, beside the client and for the same reason.
+#
+# `usbip bind` makes a device offerable; something has to be LISTENING on 3240 before any other
+# machine can actually attach it. On Windows that listener arrives with the usbipd-win installer,
+# which is why the Windows half never had to think about it. On Linux the daemon comes from the
+# distro's usbip package - which a fresh machine does not have, and whose unit ships DISABLED
+# even when it does. So the exporter was unreachable for exactly the user this feature is for:
+# verified on the z13 2026-10-04, where usbipd.service was `disabled` and `inactive`, nothing was
+# on 3240, and `usbip list -r` from the other machine could not connect at all.
+#
+# Same two-file trick as the client: usbipd links libusbip.so.0 by soname, so it travels beside
+# the library it already shares with the client and finds it through the same $ORIGIN rpath.
+echo Bundling the usbip daemon
+USBIPD_SRC="${ARTMOON_USBIPD_BIN:-}"
+if [ -z "$USBIPD_SRC" ]; then
+    for candidate in /usr/local/sbin/usbipd /usr/local/bin/usbipd /usr/sbin/usbipd; do
+        if [ -x "$candidate" ]; then USBIPD_SRC="$candidate"; break; fi
+    done
+fi
+[ -n "$USBIPD_SRC" ] \
+    || fail "no usbipd to bundle - it is built by the same 'make install' as usbip (sbin_PROGRAMS := usbip usbipd); see the Build usbip step in .github/workflows/build-linux.yml"
+file -b "$USBIPD_SRC" | grep -q "ELF" \
+    || fail "usbipd at $USBIPD_SRC is not an ELF binary"
+cp "$USBIPD_SRC" "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbipd" \
+    || fail "Failed to bundle usbipd"
+chmod 755 "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbipd"
+patchelf --set-rpath '$ORIGIN' "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbipd" \
+    || fail "Failed to give the bundled usbipd an \$ORIGIN rpath"
+# Gate it the way that proves the thing that actually matters, without starting a daemon in CI.
+# `usbipd` has no version flag - a bare or --help invocation is a daemon that cannot run as an
+# unprivileged CI user, so it would fail this gate on a perfectly good binary (the same trap as
+# `usbip --version`, which exits non-zero with "invalid option"). ldd resolves the loader without
+# entering main(), so it answers the real question - can the bundled daemon find its library from
+# where it now sits, with nothing set in the environment - and answers it safely.
+USBIPD_LDD_LINE=$(env -u LD_LIBRARY_PATH ldd "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbipd" 2>/dev/null \
+    | awk '/libusbip\.so\.0/ { print $1" -> "$3; exit }')
+[ -n "$USBIPD_LDD_LINE" ] \
+    || fail "The bundled usbipd cannot resolve libusbip.so.0 with a clean environment - its rpath or the loader is wrong"
+echo "usbipd bundled and resolves its library: $USBIPD_LDD_LINE"
+
 # Pre-seed the QML modules the app imports but linuxdeploy-plugin-qt's bundle
 # step has historically missed when the host's Qt install lacks them (the 1.0.0
 # AppImage shipped without QtQuick/Shapes and bounced on launch on every

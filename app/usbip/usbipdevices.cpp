@@ -56,6 +56,11 @@ const char *kPolicyPathLinux    = "/usr/share/polkit-1/actions/org.artmoon.input
 const char *kUsbipDirLinux      = "/usr/libexec/artmoon-usbip";
 const char *kUsbipBinLinux      = "/usr/libexec/artmoon-usbip/usbip";
 const char *kUsbipLibLinux      = "/usr/libexec/artmoon-usbip/libusbip.so.0";
+// The daemon, beside the client. `usbip bind` only makes a device offerable; a listener has to
+// be on 3240 before another machine can attach anything. Windows gets that listener from the
+// usbipd-win installer, Linux gets nothing - the distro package may not be installed at all and
+// its unit ships disabled even when it is - so we carry the daemon and place it ourselves.
+const char *kUsbipdBinLinux     = "/usr/libexec/artmoon-usbip/usbipd";
 
 /*
  * The bounded second look after a toggle. See scheduleSettle().
@@ -215,6 +220,21 @@ QString UsbIpDevices::bundledUsbipLibPath()
 #else
     const QDir appDir(QCoreApplication::applicationDirPath());
     return appDir.absoluteFilePath(QStringLiteral("../libexec/artmoon-usbip/libusbip.so.0"));
+#endif
+}
+
+/*
+ * Where the shipped daemon sits in this build - beside the client, same relative relationship
+ * again. The helper starts it from the staged path, so the AppImage and the installed tree have
+ * to agree about where that is, exactly as they do for usbip itself.
+ */
+QString UsbIpDevices::bundledUsbipdPath()
+{
+#ifdef Q_OS_WIN32
+    return QString();
+#else
+    const QDir appDir(QCoreApplication::applicationDirPath());
+    return appDir.absoluteFilePath(QStringLiteral("../libexec/artmoon-usbip/usbipd"));
 #endif
 }
 
@@ -658,9 +678,9 @@ void UsbIpDevices::installInputService()
             : qEnvironmentVariable("XDG_RUNTIME_DIR") + QStringLiteral("/artmoon-install-XXXXXX")};
 
     /*
-     * Four files go down, one approval each: the helper; the polkit action that lets the app
+     * Five files go down, one approval each: the helper; the polkit action that lets the app
      * reach it later without a password prompt on every toggle; and the usbip client with the
-     * library it links against.
+     * library it links against, plus the daemon that listens for an importer.
      *
      * The action and the helper belong in the same step because the action is the very thing
      * being granted — installing the helper without it would leave a feature that works by
@@ -671,6 +691,12 @@ void UsbIpDevices::installInputService()
      * of USB/IP it is not, and the feature looks broken rather than absent. The helper prefers
      * the host's own copy when there is one, so placing ours takes nothing away from a machine
      * that already had it.
+     *
+     * The daemon is here because a device that is bound is still invisible to the other machine
+     * until something is listening on 3240 — and on Linux nothing is, for a user who has never
+     * installed the distro's usbip package (whose unit also ships disabled even when it is
+     * installed). Windows never had this problem: usbipd-win's installer places and starts a
+     * service. This is that, for Linux, carried by us.
      */
     struct Placement {
         QString bundled;
@@ -689,6 +715,8 @@ void UsbIpDevices::installInputService()
           QLatin1String(kUsbipBinLinux), QStringLiteral("0755"), tr("the USB/IP tool") },
         { bundledUsbipLibPath(), QStringLiteral("libusbip.so.0"),
           QLatin1String(kUsbipLibLinux), QStringLiteral("0644"), tr("its library") },
+        { bundledUsbipdPath(), QStringLiteral("usbipd"),
+          QLatin1String(kUsbipdBinLinux), QStringLiteral("0755"), tr("the sharing service") },
     };
 
     for (const Placement &placement : placements) {

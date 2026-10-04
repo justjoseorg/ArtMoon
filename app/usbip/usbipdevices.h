@@ -142,6 +142,7 @@ private:
     static QString bundledPolicyPath();
     static QString bundledUsbipPath();
     static QString bundledUsbipLibPath();
+    static QString bundledUsbipdPath();
 
     /* The bounded second look after a toggle. See scheduleSettle() in the .cpp. */
     void scheduleSettle();

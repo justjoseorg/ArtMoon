@@ -64,6 +64,8 @@
 #  include <windows.h>
 #else
 #  include <dirent.h>
+#  include <strings.h>
+#  include <sys/stat.h>
 #  include <sys/types.h>
 #  include <sys/wait.h>
 #  include <unistd.h>
@@ -81,6 +83,26 @@ const char *kUsbIpHostDriver = "/sys/bus/usb/drivers/usbip-host";
 // beside it and which it finds through the $ORIGIN rpath the bundle gives it. Which copy
 // actually runs is decided in usbipProgram().
 const char *kUsbipBundledPath = "/usr/libexec/artmoon-usbip/usbip";
+
+#ifndef _WIN32
+// The daemon, staged beside the client by the app's one-time setup.
+//
+// Binding a device makes it *offerable*; a listener has to be on 3240 before any other machine
+// can attach it. On Windows that listener arrives with the usbipd-win installer, which is why
+// the Windows half never had to think about it. On Linux there is nothing: the distro package
+// may not be installed at all, and its unit ships DISABLED even when it is. Measured on the
+// exporter 2026-10-04 — usbipd.service `disabled` and `inactive`, nothing on 3240, and the other
+// machine could not connect. So we carry the daemon and we make it start, and we make it start
+// AGAIN after a reboot, which is the part a one-shot command would have missed.
+const char *kUsbipdBundledPath = "/usr/libexec/artmoon-usbip/usbipd";
+// Our own unit, deliberately NOT named usbipd.service: if the user later installs the distro
+// package, pacman owns that path and a file of ours sitting on it would be a conflict. When the
+// distro's unit IS there we use it instead of installing ours — see ensureDaemon().
+const char *kUsbipdUnitName = "artmoon-usbipd";
+const char *kUsbipdUnitPath = "/etc/systemd/system/artmoon-usbipd.service";
+// The distro's, if this machine has the usbip package.
+const char *kDistroUsbipdUnit = "usbipd.service";
+#endif
 
 // ── the plan ─────────────────────────────────────────────────────────────────────
 
@@ -363,6 +385,119 @@ bool ensureExporterModule()
     const auto result = runProcess({ "modprobe", "usbip-host" });
     return result.exitCode == 0;
 }
+
+// ── the listener ─────────────────────────────────────────────────────────────────
+//
+// A bound device is still invisible to the other machine until something is listening on 3240.
+// Everything in this block exists so that a user who has never installed anything, on a machine
+// that has never heard of USB/IP, ends up with a listener — and still has one after a reboot.
+
+// Read straight out of /proc/net/tcp rather than by running `ss`: this helper runs as root on
+// machines whose userland we have never seen, and `ss` is not guaranteed to be installed, while
+// /proc always is. Port 3240 is 0x0CA8 and LISTEN is 0x0A in that file's own hex, and the local
+// address is the field before the colon. Unprivileged callers can read this too, which is what
+// lets `status` answer the question without being able to change anything.
+bool daemonIsListening()
+{
+    const char *const tables[] = { "/proc/net/tcp", "/proc/net/tcp6" };
+    for (const char *table : tables) {
+        FILE *file = fopen(table, "r");
+        if (!file) {
+            continue;
+        }
+        char line[512];
+        bool header = true;
+        bool found = false;
+        while (!found && fgets(line, sizeof(line), file)) {
+            if (header) {
+                header = false;
+                continue;
+            }
+            char local[128] = { 0 };
+            char remote[128] = { 0 };
+            char state[16] = { 0 };
+            if (sscanf(line, " %*d: %127s %127s %15s", local, remote, state) != 3) {
+                continue;
+            }
+            if (strcmp(state, "0A") != 0) {     // 0A == LISTEN
+                continue;
+            }
+            const char *colon = strrchr(local, ':');
+            if (colon && strcasecmp(colon + 1, "0CA8") == 0) {
+                found = true;
+            }
+        }
+        fclose(file);
+        if (found) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool systemdUnitExists(const char *unit)
+{
+    // `cat` rather than `list-unit-files`: it exits non-zero for a unit that is not there, which
+    // is the question being asked, and it does not depend on how the pattern is matched.
+    const auto result = runProcess({ "systemctl", "cat", unit });
+    return result.exitCode == 0;
+}
+
+// Write the unit that runs the daemon we placed.
+bool writeUsbipdUnit()
+{
+    FILE *file = fopen(kUsbipdUnitPath, "w");
+    if (!file) {
+        return false;
+    }
+    const int written = fprintf(file,
+                                "[Unit]\n"
+                                "Description=ArtMoon USB/IP device sharing service\n"
+                                "Documentation=man:usbipd(8)\n"
+                                "After=network.target\n"
+                                "\n"
+                                "[Service]\n"
+                                "ExecStart=%s\n"
+                                "Restart=on-failure\n"
+                                "\n"
+                                "[Install]\n"
+                                "WantedBy=multi-user.target\n",
+                                kUsbipdBundledPath);
+    fclose(file);
+    if (written <= 0) {
+        return false;
+    }
+    chmod(kUsbipdUnitPath, 0644);
+    return true;
+}
+
+// Bring the listener up, and leave it coming up on its own after a reboot.
+bool ensureDaemon()
+{
+    const char *unit = kUsbipdUnitName;
+
+    // The distro's unit first, when the machine has one. It points at the distro's own daemon,
+    // built against that machine's kernel, and it is what the user's own tooling expects — so
+    // leaning on it is better than competing with it. Only when there is nothing to lean on do
+    // we install a unit of our own.
+    if (systemdUnitExists(kDistroUsbipdUnit)) {
+        unit = "usbipd";
+    } else {
+        if (access(kUsbipdBundledPath, X_OK) != 0) {
+            return false;               // nothing staged to run
+        }
+        if (!writeUsbipdUnit()) {
+            return false;
+        }
+        runProcess({ "systemctl", "daemon-reload" });
+    }
+
+    // `enable --now` and not either half alone. `start` leaves every boot after this one with no
+    // listener; `enable` alone leaves this boot without one. Both together is the only form that
+    // means "and it still works after a restart".
+    runProcess({ "systemctl", "enable", "--now", unit });
+    return daemonIsListening();
+}
 #endif
 
 } // namespace
@@ -455,6 +590,12 @@ int main(int argc, char **argv)
     }
 
     if (verb == "status") {
+#ifndef _WIN32
+        // Answered unprivileged, because it only reads /proc — which is what lets the app ask
+        // "can another machine reach me?" without being able to change the answer.
+        std::cout << (daemonIsListening() ? "listening on 3240\n"
+                                          : "nothing is listening on 3240\n");
+#endif
         const auto exported = exportedBusids();
         if (exported.empty()) {
             std::cout << "nothing is being offered to an importer\n";
@@ -509,6 +650,21 @@ int main(int argc, char **argv)
     int failures = 0;
 
 #ifndef _WIN32
+    // The listener, whenever this machine is being asked to offer anything at all.
+    //
+    // Keyed on the WANT list and not on the bind list, and the difference matters: after a
+    // reboot the bindings are gone, so a reconcile will have binds to do and this would run
+    // anyway — but a user who has toggled sharing on, had the daemon stopped underneath them,
+    // and toggled nothing since, has nothing left to bind and would never reach this. What they
+    // asked for is sharing, so sharing is what gets made true.
+    if (!wantList.empty() && !ensureDaemon()) {
+        std::cerr << "could not start the USB/IP service, so no other machine can reach this "
+                     "one. Devices will still be offered locally.\n";
+        // Deliberately not fatal: the bind below is still worth doing, and the app reports the
+        // listener separately through `status`. Failing here would turn a reachability problem
+        // into a feature that looks entirely broken.
+    }
+
     if (!plan.toBind.empty() && !ensureExporterModule()) {
         std::cerr << "could not load the usbip-host module, so nothing can be offered\n";
         return 1;

@@ -426,6 +426,12 @@ jobs:
           # answers "not found" for it - which is precisely how the first version of this failed.
           echo "ARTMOON_USBIP_BIN=/usr/local/sbin/usbip" >> "$GITHUB_ENV"
           echo "ARTMOON_USBIP_LIB=/usr/local/lib/libusbip.so.0" >> "$GITHUB_ENV"
+          # The DAEMON too, from the same build: tools/usb/usbip has
+          # `sbin_PROGRAMS := usbip usbipd`, so both land in /usr/local/sbin. The exporter
+          # needs the daemon listening on 3240 before any other machine can attach anything,
+          # and on a fresh machine there is no usbip package at all - so if we do not carry
+          # it, the feature cannot work for a new user no matter what the app does.
+          echo "ARTMOON_USBIPD_BIN=/usr/local/sbin/usbipd" >> "$GITHUB_ENV"
 
       - name: Install linuxdeploy
         working-directory: dep_root/bin
