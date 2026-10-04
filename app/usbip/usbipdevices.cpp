@@ -480,8 +480,8 @@ void UsbIpDevices::refresh()
                     // that stream. A message that asks for work we now do ourselves is worse than
                     // no message — it teaches a step that has stopped existing.
                     m_ReachabilityReason = tr("Everything switched on below is ready. Start a "
-                         "stream to this PC from the other machine and it will be able to use "
-                         "them — ArtMoon opens the connection by itself when you do.");
+                         "stream and it will be able to use them — ArtMoon opens the connection "
+                         "by itself when you do.");
                 } else {
                     // A code this build does not know. Show it rather than swallow it — an
                     // unexplained silence is what this whole block exists to remove.
