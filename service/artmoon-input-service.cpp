@@ -688,7 +688,21 @@ Peer streamingPeer()
             if (sscanf(line, " %*d: %127s %127s %15s", local, remote, state) != 3) {
                 continue;
             }
-            if (strcmp(state, "01") != 0) {         // 01 == ESTABLISHED
+            // A connection that has only just closed still names the far end, and it stays in
+            // the table for a minute afterwards. That matters more than it looks: ArtMoon's own
+            // look at the host — the connection that draws its app list — is open for a fraction
+            // of a second and repeats every two or three, so a test that accepts only ESTABLISHED
+            // catches it by luck. Measured on the exporter 2026-10-04: the app asks this helper
+            // every few seconds, the look was missed almost every time, and the device was
+            // offered and handed back on a 16-to-36-second cycle all evening — the export
+            // flapping underneath someone who was not streaming anything at all.
+            //
+            // TIME_WAIT is the honest reading of "we were in contact with that machine, on a
+            // streaming port, moments ago", which is exactly what the rule and the bind want to
+            // know. A session that has ended is still a machine that may start another.
+            const bool live   = strcmp(state, "01") == 0;   // ESTABLISHED
+            const bool recent = strcmp(state, "06") == 0;   // TIME_WAIT
+            if (!live && !recent) {
                 continue;
             }
             // Which end of the connection is the session? Either one, and the difference
@@ -710,6 +724,16 @@ Peer streamingPeer()
             const char *localColon = strrchr(local, ':');
             const char *remoteColon = strrchr(remote, ':');
             if (!localColon || !remoteColon) {
+                continue;
+            }
+            // A connection this machine made to ITSELF — its own listener, reached on its own
+            // address rather than through loopback — is not another machine, and a rule for it
+            // would open the port to ourselves while looking like it had done something. Both
+            // ends carry the same address in that case, which is the whole test. Measured on the
+            // exporter 2026-10-04: these rows sit in the table ahead of the real one, so without
+            // this the first match would have been this machine.
+            if (localColon - local == remoteColon - remote
+                && strncmp(local, remote, static_cast<size_t>(localColon - local)) == 0) {
                 continue;
             }
             const unsigned long localPort = strtoul(localColon + 1, nullptr, 16);
