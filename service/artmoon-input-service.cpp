@@ -78,8 +78,8 @@ const char *kUsbIpHostDriver = "/sys/bus/usb/drivers/usbip-host";
 
 // The usbip ArtMoon ships, if the user's copy has placed it. It gets a directory of its own
 // because it is two files and not one: usbip links against libusbip.so.0, which travels
-// beside it. Which copy actually runs is decided in usbipProgram().
-const char *kUsbipBundledDir  = "/usr/libexec/artmoon-usbip";
+// beside it and which it finds through the $ORIGIN rpath the bundle gives it. Which copy
+// actually runs is decided in usbipProgram().
 const char *kUsbipBundledPath = "/usr/libexec/artmoon-usbip/usbip";
 
 // ── the plan ─────────────────────────────────────────────────────────────────────
@@ -387,14 +387,18 @@ int main(int argc, char **argv)
     setenv("PATH", "/usr/sbin:/usr/bin:/sbin:/bin", 1);
 
 #ifndef _WIN32
-    // Same reasoning, for our own usbip. That copy is two files in one directory — the binary
-    // and the libusbip.so.0 it links against — and it is a copied host binary rather than one
-    // we compiled, so it carries no rpath of ours. The loader therefore has to be told where
-    // "beside it" is. Set only when our copy is actually present, so a machine running its own
-    // usbip keeps its own library resolution exactly as it was.
-    if (access(kUsbipBundledPath, X_OK) == 0) {
-        setenv("LD_LIBRARY_PATH", kUsbipBundledDir, 1);
-    }
+    // Our own usbip needs nothing set here, and that is deliberate.
+    //
+    // We compile it now, and the bundle gives it an $ORIGIN rpath (scripts/build-appimage.sh,
+    // whose gate then proves it by running the copy with a CLEAN environment), so it finds the
+    // libusbip.so.0 sitting beside it without being told.
+    //
+    // The variable this used to set was worse than redundant. LD_LIBRARY_PATH applies to every
+    // child, so on a machine that HAS its own usbip - the one usbipProgram() prefers - it put
+    // our libusbip on that host tool's search path, which is the opposite of the "a machine
+    // running its own usbip keeps its own library resolution exactly as it was" that this block
+    // claimed. A property of the file we install is the right place for this; the environment of
+    // a root process is not.
 #endif
 
     std::vector<std::string> args(argv + 1, argv + argc);
