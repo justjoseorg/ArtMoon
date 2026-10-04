@@ -93,6 +93,36 @@ knows a busid gets the device. Never port-forward it.
 
 Attaching is **non-persistent**: re-attach after a reboot, a device reset, or a replug.
 
+## The firewall, and the shape an authenticated future would want
+
+**Seed, 2026-10-04, Nik and Rias.** Not a decision — a note so it does not get lost.
+
+On Linux, ArtMoon's own helper is what opens 3240, because nothing else does: the `usbip` package ships `usbipd`
+disabled and opens no port, and the `usbipd-win` installer's `LocalSubnet` rule has no Linux counterpart. The rule
+the helper writes is deliberately the narrowest one that works:
+
+- it names **one address** — the machine actually streaming to us — never a subnet, never `Anywhere`;
+- it exists only while that session is live; the reconcile that ends the session closes the port again, and so
+  does turning sharing off;
+- it is removed by matching the **exact string this program generated**, never by pattern. Firewalld rich rules
+  carry no comment field, so nothing on the face of one says who wrote it — and a rule a person wrote by hand for
+  their own purposes has to survive us touching the same port. On that side the rule is also added with a
+  lifetime, so it closes itself rather than being guessed at.
+
+The transferable part is not the ufw calls. It is the rule underneath them: **open for the one thing you can name,
+and only while you are serving it.** The helper already refuses to open the port for a machine it cannot point at,
+and that refusal is the seam.
+
+That is the shape authenticated WAN sharing would want, if it is ever built. What would change is what counts as
+a *name*: an address stops meaning much once the importer can roam or sit behind a NAT, so the peer would be the
+authenticated identity instead. The discipline is identical, and the two functions that would change
+(`allowPortFor`, `revokeStaleRules`) already take the peer as an argument rather than working it out for
+themselves. Swapping the key, not rewriting the design.
+
+Honest state of it: the ufw half is proven — 11 assertions in a private network namespace with a real veth pair
+and a real connection from the far end, including that a hand-written rule for 3240 survives every step. The
+firewalld half is **by construction, not by test** — there is no firewalld machine here to exercise it on.
+
 ## Known trap
 
 An empty `Persisted:` table in `usbipd list` does **not** clear a repeatable `Device busy (already exported)`.
