@@ -549,6 +549,27 @@ void UsbIpDevices::watchForPeer()
 {
     const QStringList wanted = wantedBusids();
 
+    // The session has ended, so hand the device back.
+    //
+    // Switching a device on is a loan for the length of a stream, not a permanent handover.
+    // When the machine we were streaming with goes, nothing is using the export any more — and
+    // an export left bound is a device the person at this machine can no longer use, which is
+    // the thing they notice, and rightly call a bug. Reconciling with nothing wanted makes the
+    // helper unbind what it bound and take its firewall rule away with it.
+    //
+    // The tick itself is untouched: that is the standing choice, and the next session binds it
+    // again. So this fires on the fall from a peer to no peer, once — which is why the state is
+    // cleared here rather than left to the early return below.
+    if (!m_LastPeer.isEmpty() && m_ReachablePeer.isEmpty()) {
+        m_LastPeer.clear();
+        m_OpenedForPeer.clear();
+        m_PeerAttempts = 0;
+        if (m_CanShare && !wanted.isEmpty()) {
+            reconcileWithService(QStringList(), false);
+        }
+        return;
+    }
+
     if (!m_CanShare || wanted.isEmpty() || m_ReachablePeer.isEmpty()) {
         m_OpenedForPeer.clear();
         m_LastPeer.clear();

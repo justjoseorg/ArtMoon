@@ -670,16 +670,34 @@ Peer streamingPeer()
             if (strcmp(state, "01") != 0) {         // 01 == ESTABLISHED
                 continue;
             }
-            // The port we are being connected TO is the local one. The remote port is the
-            // client's own ephemeral port and says nothing about what it is doing.
+            // Which end of the connection is the session? Either one, and the difference
+            // matters:
+            //
+            //   - A machine streaming INTO us is a client we are serving. Our local port is
+            //     the streaming port, and the far end is the address we open for.
+            //   - A machine we are streaming TO is the host we are sitting at. The connection
+            //     is ours and goes out, so it is the REMOTE port that is the streaming one —
+            //     and the far end is still the address we open for, because that is the
+            //     machine about to be handed the device.
+            //
+            // Only the first shape was recognised, and that was the bug: switch a device on
+            // for a stream going out and nothing ever matched. No rule was opened, the import
+            // at the far end was dropped in silence, and the client hung waiting on it.
+            //
+            // In both shapes the far end is the remote address — we are always the local end
+            // of our own connections — so one lookup serves both.
             const char *localColon = strrchr(local, ':');
-            if (!localColon) {
+            const char *remoteColon = strrchr(remote, ':');
+            if (!localColon || !remoteColon) {
                 continue;
             }
-            const unsigned long port = strtoul(localColon + 1, nullptr, 16);
+            const unsigned long localPort = strtoul(localColon + 1, nullptr, 16);
+            const unsigned long remotePort = strtoul(remoteColon + 1, nullptr, 16);
+
             bool streaming = false;
             for (const int candidate : kStreamingPorts) {
-                if (port == static_cast<unsigned long>(candidate)) {
+                const unsigned long port = static_cast<unsigned long>(candidate);
+                if (localPort == port || remotePort == port) {
                     streaming = true;
                 }
             }
