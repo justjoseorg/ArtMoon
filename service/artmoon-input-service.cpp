@@ -552,6 +552,10 @@ bool ensureDaemon()
 // So this opens the port for exactly one machine, and only ever one — the client we are already
 // streaming to. Never a subnet, never "anywhere". If we cannot name that machine we open
 // nothing at all; see streamingPeer().
+//
+// And it closes the port again when that machine stops. A rule that outlives its session is a
+// port standing open for a machine that finished with us hours ago — and one more of them every
+// time sharing is toggled. See the firewall half of reconcile().
 
 // The ports a client connects TO when it is in a session with us. Taken from the product's own
 // address definitions rather than chosen here. The video and audio ports are UDP and so never
@@ -560,6 +564,26 @@ const int kStreamingPorts[] = { 47984, 47989, 48002, 48010 };
 
 // The marker our own rules carry, so a rule of the user's is never mistaken for one of ours.
 const char *kRuleMarker = "artmoon-device-sharing";
+
+// firewalld's rich rules have no comment field, so on that side there is nothing on the face of
+// a rule that says it is ours. Both consequences are handled below, and both are deliberate:
+// the rule we add carries a timeout, so it cannot outlive the session that needed it even if
+// nothing ever comes back to tidy up; and removal only ever happens for an address we can name,
+// by exact text, so a rule written by hand can never be caught by a pattern.
+const char *kFirewalldRuleFormat =
+    "rule family=\"ipv4\" source address=\"%s\" port port=\"3240\" protocol=\"tcp\" accept";
+
+// Twelve hours, refreshed every time sharing is toggled. Long enough that a session in progress
+// never loses its rule underneath it, short enough that a port opened for a machine that walked
+// away does not stay open for the rest of the week.
+const int kFirewalldRuleSeconds = 12 * 60 * 60;
+
+std::string firewalldRuleFor(const std::string &address)
+{
+    char buffer[512];
+    snprintf(buffer, sizeof(buffer), kFirewalldRuleFormat, address.c_str());
+    return std::string(buffer);
+}
 
 // /proc prints each 32-bit word in host order, so an IPv4 address's bytes come out reversed:
 // 10.6.0.3 is 0x0A060003 on the wire and "0300060A" in the file.
@@ -697,13 +721,12 @@ bool allowPortFor(const std::string &address, Firewall firewall)
                             "proto", "tcp", "comment", kRuleMarker }).exitCode == 0;
     }
     if (firewall == Firewall::Firewalld) {
-        const std::string rule = "rule family=\"ipv4\" source address=\"" + address
-                                 + "\" port port=\"3240\" protocol=\"tcp\" accept";
-        if (runProcess({ "firewall-cmd", "--permanent", "--add-rich-rule=" + rule }).exitCode != 0) {
-            return false;
-        }
-        runProcess({ "firewall-cmd", "--reload" });
-        return true;
+        // Runtime rather than permanent, and with a lifetime on it. Permanent would mean a rule
+        // that survives a reboot into a machine where the machine it names may be long gone, and
+        // that nothing here can safely find again to remove. Runtime rules take effect at once,
+        // so there is deliberately no --reload: reloading is the very thing that would drop it.
+        return runProcess({ "firewall-cmd", "--add-rich-rule=" + firewalldRuleFor(address),
+                            "--timeout=" + std::to_string(kFirewalldRuleSeconds) }).exitCode == 0;
     }
     return true;        // nothing is filtering, so the listener is already the whole story
 }
@@ -711,8 +734,13 @@ bool allowPortFor(const std::string &address, Firewall firewall)
 // Take back what was opened for a machine we are no longer serving.
 //
 // Without this the port slowly opens to every client that has ever connected — each one its own
-// rule, none of them visible unless the user goes looking for them. Only rules carrying our own
-// marker are touched, so a rule the user wrote themselves stays exactly where it is.
+// rule, none of them visible unless the user goes looking for them.
+//
+// An empty `keep` means take back everything we wrote, which is what a machine that has stopped
+// sharing, or is sharing but serving nobody, should end up with. On ufw that is exact, because
+// our rules carry a marker and a rule the user wrote themselves does not. firewalld has no such
+// marker to carry, so there the same call does nothing rather than guess — see the arm below —
+// and the timeout on the rule is what closes that case instead.
 void revokeStaleRules(const std::string &keep, Firewall firewall)
 {
     if (firewall == Firewall::Ufw) {
@@ -749,26 +777,17 @@ void revokeStaleRules(const std::string &keep, Firewall firewall)
     }
 
     if (firewall == Firewall::Firewalld) {
-        const auto rules = runProcess({ "firewall-cmd", "--permanent", "--list-rich-rules" });
-        if (rules.exitCode != 0) {
+        // One exact string: the rule this program generates for the address being replaced, and
+        // nothing else. The version this replaced matched on "port 3240, has a source address"
+        // and would therefore have deleted a rule the user added by hand for their own purposes
+        // — a permission they granted, removed by a program that had no business touching it.
+        //
+        // With no address to keep there is nothing we can name, so nothing is removed. That case
+        // is not left open: the rule carries a timeout and closes itself.
+        if (keep.empty()) {
             return;
         }
-        std::istringstream lines(rules.output);
-        std::string rule;
-        bool changed = false;
-        while (std::getline(lines, rule)) {
-            if (rule.find("3240") == std::string::npos
-                || rule.find("source address=") == std::string::npos
-                || rule.find(keep) != std::string::npos) {
-                continue;
-            }
-            if (runProcess({ "firewall-cmd", "--permanent", "--remove-rich-rule=" + rule }).exitCode == 0) {
-                changed = true;
-            }
-        }
-        if (changed) {
-            runProcess({ "firewall-cmd", "--reload" });
-        }
+        runProcess({ "firewall-cmd", "--remove-rich-rule=" + firewalldRuleFor(keep) });
     }
 }
 #endif
@@ -1120,21 +1139,21 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    if (plan.toBind.empty() && plan.toUnbind.empty()) {
-        std::cout << "already in the state you asked for\n";
-        return 0;
-    }
-
-    int failures = 0;
-
 #ifndef _WIN32
+    // Both of the things below are keyed on being wanted, not on there being anything left to
+    // bind — and that is why they sit above the shortcut that follows. An empty bind list means
+    // there is nothing to do to the *devices*; it says nothing at all about the listener or the
+    // firewall. The case that made this obvious: a user toggles sharing off. Nothing is bound
+    // any more, so the plan is empty, and the firewall was never told — leaving a port open for a
+    // machine they had just finished with. The check is only ever about bindings.
+
     // The listener, whenever this machine is being asked to offer anything at all.
     //
     // Keyed on the WANT list and not on the bind list, and the difference matters: after a
     // reboot the bindings are gone, so a reconcile will have binds to do and this would run
     // anyway — but a user who has toggled sharing on, had the daemon stopped underneath them,
-    // and toggled nothing since, has nothing left to bind and would never reach this. What they
-    // asked for is sharing, so sharing is what gets made true.
+    // and toggled nothing since, has nothing left to bind. What they asked for is sharing, so
+    // sharing is what gets made true.
     if (!wantList.empty()) {
         if (!ensureDaemon()) {
             std::cerr << "could not start the USB/IP service, so no other machine can reach this "
@@ -1143,30 +1162,53 @@ int main(int argc, char **argv)
             // the listener separately through `status`. Failing here would turn a reachability
             // problem into a feature that looks entirely broken.
         }
+    }
 
-        // And the other half of reachability, for a machine that filters. A listener being up is
-        // not the same as the port being open, and the exporter showed exactly that: reachable
-        // from the far end only after a rule, with the daemon already running.
-        const Firewall firewall = detectFirewall();
-        if (firewall == Firewall::None) {
-            // Nothing is filtering, so the listener above is already the whole story.
+    // And the other half of reachability, for a machine that filters. A listener being up is not
+    // the same as the port being open, and the exporter showed exactly that: reachable from the
+    // far end only after a rule, with the daemon already running.
+    //
+    // This runs whether or not anything is wanted, and that is the point of it rather than an
+    // accident of where it sits. A rule exists to serve a live session. With no session there is
+    // nothing to serve, so it goes — including when the user has just turned sharing off, which
+    // is the moment they most expect the port to stop being open. Leaving the rule in place
+    // would mean a port standing open for a machine that stopped talking to us some time ago,
+    // and one more of those every time sharing is toggled.
+    const Firewall firewall = detectFirewall();
+    if (firewall == Firewall::None) {
+        // Nothing is filtering, so the listener above is already the whole story.
+    } else {
+        const Peer peer = wantList.empty() ? Peer() : streamingPeer();
+        if (peer.found) {
+            revokeStaleRules(peer.address, firewall);
+            if (!allowPortFor(peer.address, firewall)) {
+                std::cerr << "could not open port 3240 for " << peer.address << "\n";
+            }
         } else {
-            const Peer peer = streamingPeer();
-            if (!peer.found) {
-                // We will not open a port for a machine we cannot name. "Anywhere" is a
-                // different feature with a different risk, and this is not it.
+            // We will not open a port for a machine we cannot name, and "anywhere" is a different
+            // feature with a different risk. An empty `keep` means take back every rule we wrote
+            // and leave the user's own alone — which is the right end state for both cases here:
+            // nothing is being shared, or nothing is connected to be served.
+            revokeStaleRules(std::string(), firewall);
+            if (!wantList.empty()) {
                 std::cerr << "no client is connected, so the firewall has not been opened for "
                              "one. Start a session from the other machine, then toggle sharing "
                              "again.\n";
-            } else {
-                revokeStaleRules(peer.address, firewall);
-                if (!allowPortFor(peer.address, firewall)) {
-                    std::cerr << "could not open port 3240 for " << peer.address << "\n";
-                }
             }
         }
     }
+#endif
 
+    // Only the bindings are settled by this point — the listener and the firewall above are done.
+    // "Already in the state you asked for" is true of the devices, and only of the devices.
+    if (plan.toBind.empty() && plan.toUnbind.empty()) {
+        std::cout << "already in the state you asked for\n";
+        return 0;
+    }
+
+    int failures = 0;
+
+#ifndef _WIN32
     if (!plan.toBind.empty() && !ensureExporterModule()) {
         std::cerr << "could not load the usbip-host module, so nothing can be offered\n";
         return 1;
