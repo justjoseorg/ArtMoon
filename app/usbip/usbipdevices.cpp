@@ -411,9 +411,30 @@ void UsbIpDevices::refresh()
                 }
                 const QString code = line.mid(12).trimmed();
                 if (code == QLatin1String("no-listener")) {
-                    m_ReachabilityReason = tr("This PC is not accepting device connections, so no "
-                         "other machine can see anything shared from it. Restarting ArtMoon will "
-                         "try to start it again.");
+                    // Two entirely different situations print this one code, and telling them
+                    // apart is the whole reason this block exists.
+                    //
+                    // Nothing wanted: nothing is being offered, so nothing is listening — and that
+                    // is the correct state of a machine that has never shared anything. Calling it
+                    // "not accepting device connections" describes a fault where there is none,
+                    // and sending the user to restart ArtMoon sends them to do something that
+                    // cannot possibly help: the listener is not started by a restart, it is
+                    // started by sharing a device. Measured on the exporter 2026-10-04, minutes
+                    // after a clean first run, with nothing wanted.
+                    //
+                    // Something wanted: the device says it is shared and nothing is listening,
+                    // which IS the fault — and there the restart is a real remedy, because
+                    // reconcile runs again on startup with the wanted list and that is what brings
+                    // the listener up.
+                    if (wantedBusids().isEmpty()) {
+                        m_ReachabilityReason = tr("Nothing is being shared from this PC yet, so no "
+                             "other machine can see anything from it. Turn a device on and ArtMoon "
+                             "will make it reachable.");
+                    } else {
+                        m_ReachabilityReason = tr("This PC is not accepting device connections, so no "
+                             "other machine can see anything shared from it. Restarting ArtMoon will "
+                             "try to start it again.");
+                    }
                 } else if (code == QLatin1String("no-client")) {
                     m_ReachabilityReason = tr("Nothing is connected to this PC yet, so sharing has "
                          "not been opened for anyone. Start a session from the other machine, then "
