@@ -539,7 +539,22 @@ bool ensureDaemon()
     // listener; `enable` alone leaves this boot without one. Both together is the only form that
     // means "and it still works after a restart".
     runProcess({ "systemctl", "enable", "--now", unit });
-    return daemonIsListening();
+
+    // Then wait for the thing we are actually asking about.
+    //
+    // `enable --now` returns the moment the unit is *started*, which is not the moment the daemon
+    // has *bound its port*. Checking once, right here, read a socket that was a moment away as a
+    // failure — and the caller then told the user "no other machine can reach this one" while it
+    // could, a second later. Measured on the exporter 2026-10-04: the warning printed and the
+    // listener was up by the time the next command ran. A false negative here is worse than a
+    // slow answer, because it tells someone their machine is unreachable when it is not.
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        if (daemonIsListening()) {
+            return true;
+        }
+        usleep(100000);                     // 100 ms a turn, so two seconds at the outside
+    }
+    return false;
 }
 
 // ── reachability ────────────────────────────────────────────────────────────────
