@@ -82,6 +82,17 @@ constexpr int kSettleIntervalMs = 1200;
 constexpr int kPeerIntervalMs = 5000;
 
 /*
+ * The same look, at a shorter interval, for the one state where waiting is visible.
+ *
+ * A tick binds nothing now — the bind happens when a stream appears — so there is a stretch
+ * where something is wanted and nothing is held, and in that stretch the other machine is
+ * about to ask this one for a device that does not yet exist as an export. Making that window
+ * one second instead of five is not about tidiness: it is the difference between the far end
+ * finding the device on the attempt it makes and being refused.
+ */
+constexpr int kPeerWaitIntervalMs = 1000;
+
+/*
  * How many times to try opening for one machine before leaving it alone.
  *
  * The call goes through pkexec, and polkit grants this one only to the local ACTIVE session —
@@ -469,9 +480,15 @@ void UsbIpDevices::refresh()
                              "nothing for your other machines to use yet. Switch a device on and "
                              "ArtMoon will make it available.");
                     } else {
-                        m_ReachabilityReason = tr("Sharing is switched on, but this PC is not "
-                             "accepting connections, so nothing switched on below can be used. "
-                             "Restart ArtMoon to try to start it.");
+                        // Not a fault any more, and no longer says to restart ArtMoon — that
+                        // remedy belonged to a build where ticking a device bound it, so a
+                        // listener was expected to be up the moment anything was switched on.
+                        // Ticking binds nothing now; the bind waits for the stream. This is the
+                        // ordinary state of a machine that is ready and not yet in use, and it
+                        // is the state the person is in while they are deciding what to stream.
+                        m_ReachabilityReason = tr("Ready. Nothing has been taken from this PC "
+                             "yet — the devices switched on below go to your other machine when "
+                             "a stream starts, and come back when it stops.");
                     }
                 } else if (code == QLatin1String("no-client")) {
                     // The second toggle used to live in this sentence. It was true when it was
@@ -522,8 +539,32 @@ void UsbIpDevices::refresh()
     // know about it is to ask — and asking forever when nothing is shared would be a
     // background cost for no answer.
     if (m_CanShare && !wantedBusids().isEmpty()) {
+        /*
+         * Two speeds, because the interval is felt in exactly one of the two states.
+         *
+         * Waiting to bind is the state a tick alone puts us in — something wanted, nothing taken
+         * yet — and it is the state where a slow poll costs something real: the other machine
+         * attaches its devices when the stream starts, and it is OUR bind that makes the export
+         * exist for it to find. At five seconds there is a window where the PC reaches for a
+         * device that is still local here and is refused, which reads at the far end as this
+         * machine not sharing anything. Look every second while that is the state.
+         *
+         * Once something is bound the peer is either there or it is not, and five seconds is
+         * plenty — the poll is only being watched for the END of a session by then.
+         */
+        bool anyShared = false;
+        for (const auto &entry : m_Devices) {
+            if (entry.toMap().value(QStringLiteral("shared")).toBool()) {
+                anyShared = true;
+                break;
+            }
+        }
+        const int interval = anyShared ? kPeerIntervalMs : kPeerWaitIntervalMs;
+        if (m_PeerTimer.interval() != interval) {
+            m_PeerTimer.setInterval(interval);
+        }
         if (!m_PeerTimer.isActive()) {
-            m_PeerTimer.start(kPeerIntervalMs);
+            m_PeerTimer.start(interval);
         }
     }
     else {
@@ -655,12 +696,49 @@ void UsbIpDevices::setWanted(const QString &busid, bool wanted)
         emit devicesChanged();
     }
 
-    // Reconcile with the service. Absent service == the intent is still recorded, and
-    // `shared` is left alone, so the tab shows "wanted, not shared" instead of pretending.
-    //
-    // The desired set is handed over explicitly rather than read from a file: the helper runs
-    // as root, so it must never be pointed at a path an unprivileged process can rewrite.
-    reconcileWithService(busids, true);
+    /*
+     * Turning a device ON does not reconcile, and that is the whole point of the tick.
+     *
+     * `usbip bind` detaches a device from the local USB stack — there is no Linux state that
+     * means "shareable but still mine". So reconciling here, which is what this did, took the
+     * device out of the person's hand the instant they ticked it: a mouse stopped moving, for a
+     * stream that had not started. Reproduced on the z13, 2026-10-04.
+     *
+     * On Windows `usbipd bind` only marks a device shareable and it stays usable until a client
+     * attaches, so ticking there costs nothing. Linux cannot copy that state, so it copies the
+     * only thing that matters: WHEN the device moves. Nothing is bound until a stream actually
+     * starts, which watchForPeer() detects and acts on. Bind at the session, not at the tick.
+     *
+     * The intent is still recorded here, and refresh() below starts the peer watch that will
+     * notice the stream — which is why the peer watch is driven by `wanted` and not by `shared`.
+     *
+     * Turning a device OFF is the opposite case and does reconcile: see below.
+     */
+    if (wanted) {
+        refresh();
+        scheduleSettle();
+        return;
+    }
+
+    /*
+     * Switching something off IS an action, because a device lent out mid-stream has to come
+     * back now rather than at the end of a stream the person has just cancelled.
+     *
+     * Bind nothing new — hand back the one switched off, and keep only what the machine is
+     * already exporting and still wants. Re-deriving the binds from `busids` would re-take every
+     * other ticked device that is not currently lent, which is the bug above in a different
+     * shape; the `shared` list is what the machine is actually holding.
+     */
+    QStringList keep;
+    for (const auto &entry : m_Devices) {
+        const QVariantMap row = entry.toMap();
+        const QString other = row.value(QStringLiteral("busid")).toString();
+        if (other != busid && row.value(QStringLiteral("shared")).toBool()
+                && busids.contains(other)) {
+            keep.append(other);
+        }
+    }
+    reconcileWithService(keep, true);
 
     /*
      * Re-read, not re-mark.

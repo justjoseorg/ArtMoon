@@ -1135,12 +1135,26 @@ int main(int argc, char **argv)
         // code and an address rather than a sentence: the sentence belongs on the screen that
         // shows it, where it can be translated and can name the remedy.
         const Peer peer = streamingPeer();
-        if (!daemonIsListening()) {
-            std::cout << "unreachable: no-listener\n";
-        } else if (!peer.found) {
-            std::cout << "unreachable: no-client\n";
-        } else {
+
+        /*
+         * The peer is reported BEFORE the listener, and that order is load-bearing.
+         *
+         * A stream can start while nothing on this machine is bound yet — that is the ordinary
+         * case now, because a tick binds nothing and the bind waits for the session. With nothing
+         * bound there is no daemon, so asking about the listener first answered `no-listener` and
+         * never mentioned the peer at all: the app was told there was nobody streaming at the one
+         * moment somebody was, so it never bound, so there was never a listener. A deadlock that
+         * looked exactly like the bug it was meant to fix.
+         *
+         * "Is anyone streaming at us?" and "are we serving the export?" are different questions,
+         * and this verb has to answer the first one even when the second is no.
+         */
+        if (peer.found) {
             std::cout << "reachable: " << peer.address << "\n";
+        } else if (!daemonIsListening()) {
+            std::cout << "unreachable: no-listener\n";
+        } else {
+            std::cout << "unreachable: no-client\n";
         }
 #endif
         const auto exported = exportedBusids();
