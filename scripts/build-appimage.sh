@@ -155,25 +155,71 @@ echo "Input service polkit action bundled and cross-checked against the helper p
 # the kernel that distro ships and that is a matched pair we cannot beat. This copy is the
 # fallback, for the machine that has none.
 echo Bundling the usbip client
-USBIP_SRC=$(command -v usbip) \
-    || fail "usbip not found in the build container - the AppImage would ship without it (jammy: apt-get install linux-tools-common)"
+# WHICH usbip, and why it is no longer simply `command -v usbip` (root-caused 2026-10-04, CI run
+# 37165636653). On Ubuntu there is no `usbip` package: the name is provided by
+# linux-tools-common, and what that installs at /usr/bin/usbip is a BASH STUB, not a binary. It
+# execs /usr/lib/linux-tools/$(uname -r)/usbip - a path that does not exist inside a container -
+# so `command -v usbip` in this build handed back a shell script. It copied perfectly, and ldd
+# said "not a dynamic executable". Without the guard below, the AppImage would have shipped a
+# usbip that cannot run at all, and the first anyone would know is a share toggle on a Linux
+# machine quietly doing nothing.
+#
+# So the workflow BUILDS the real tool from the kernel tree (tools/usb/usbip) and installs it to
+# /usr/local/sbin. It is looked for there BY NAME, not by PATH order: PATH is exactly the thing
+# that handed us the stub.
+USBIP_SRC="${ARTMOON_USBIP_BIN:-}"
+if [ -z "$USBIP_SRC" ]; then
+    for candidate in /usr/local/sbin/usbip /usr/local/bin/usbip; do
+        if [ -x "$candidate" ]; then USBIP_SRC="$candidate"; break; fi
+    done
+fi
+[ -n "$USBIP_SRC" ] || USBIP_SRC=$(command -v usbip || true)
+[ -n "$USBIP_SRC" ] \
+    || fail "no usbip to bundle - build one first (see the Build usbip step in .github/workflows/build-linux.yml)"
+# A real binary, not the stub. `file` says so outright, and this is the check that names the
+# actual cause rather than failing later with something that reads like a code bug.
+file -b "$USBIP_SRC" | grep -q "ELF" \
+    || fail "usbip at $USBIP_SRC is not an ELF binary. On Ubuntu that path is linux-tools-common's bash stub, which cannot run inside a container - build the real one instead"
 mkdir -p "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip"
 cp "$USBIP_SRC" "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbip" \
     || fail "Failed to bundle usbip"
-USBIP_LIB=$(ldd "$USBIP_SRC" | awk '/libusbip\.so/ { print $3; exit }')
+# The library, by name first. `ldd` alone is not enough here and the reason is worth keeping:
+# a library that was installed a moment ago is not in the loader's cache yet, so ldd answers
+# "libusbip.so.0 => not found" for a pair that is perfectly fine. That is what this check did
+# on the first run after the tool moved from apt to a local build. So: the env var the workflow
+# sets, then the usual install locations, and only then ldd.
+USBIP_LIB="${ARTMOON_USBIP_LIB:-}"
+if [ -z "$USBIP_LIB" ]; then
+    for candidate in /usr/local/lib/libusbip.so.0 /usr/lib/libusbip.so.0 \
+                     "$(dirname "$USBIP_SRC")/libusbip.so.0"; do
+        if [ -f "$candidate" ]; then USBIP_LIB="$candidate"; break; fi
+    done
+fi
+if [ -z "$USBIP_LIB" ]; then
+    USBIP_LIB=$(ldd "$USBIP_SRC" 2>/dev/null | awk '/libusbip\.so/ { print $3; exit }')
+fi
 [ -n "$USBIP_LIB" ] && [ -f "$USBIP_LIB" ] \
     || fail "usbip links no usable libusbip.so - the bundled copy would not start on a host that has none"
 cp "$USBIP_LIB" "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/libusbip.so.0" \
     || fail "Failed to bundle libusbip.so.0"
 chmod 755 "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbip"
 chmod 644 "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/libusbip.so.0"
-# Prove the pair runs FROM WHERE IT NOW SITS, with nothing but what a host without usbip would
-# have. A copy that cannot start is precisely the failure nobody would see until a user pressed
-# a toggle - and note the subcommand: `usbip version`, not `usbip --version`, which exits
-# non-zero with "invalid option" and would fail this gate on a perfectly good binary.
-USBIP_BUNDLED_VERSION=$(LD_LIBRARY_PATH="$DEPLOY_FOLDER/usr/libexec/artmoon-usbip" \
-    "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbip" version 2>&1) \
-    || fail "The bundled usbip cannot run - its library or the loader is wrong"
+# Make the two find each other WITHOUT being told. usbip links libusbip.so.0 by soname and is
+# built with no rpath, so a bare copy sitting beside its own library still fails:
+#   ./usbip: error while loading shared libraries: libusbip.so.0: cannot open shared object file
+# (verified in a jammy container). $ORIGIN makes it look in its own directory, so the pair is
+# self-contained wherever it lands and whoever runs it - which is the entire point of carrying
+# it, because the machine it exists for is the one with no usbip AND no libusbip.
+patchelf --set-rpath '$ORIGIN' "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbip" \
+    || fail "Failed to give the bundled usbip an \$ORIGIN rpath"
+# Prove the pair runs FROM WHERE IT NOW SITS, with a deliberately CLEAN environment: no
+# LD_LIBRARY_PATH, nothing but what a host without usbip would have. That is what makes this a
+# test of the rpath rather than a test of whoever set the variable up. A copy that cannot start
+# is precisely the failure nobody would see until a user pressed a toggle - and note the
+# subcommand: `usbip version`, not `usbip --version`, which exits non-zero with "invalid option"
+# and would fail this gate on a perfectly good binary.
+USBIP_BUNDLED_VERSION=$(env -u LD_LIBRARY_PATH "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbip" version 2>&1) \
+    || fail "The bundled usbip cannot run with a clean environment - its rpath or the loader is wrong"
 echo "usbip bundled and runnable: $USBIP_BUNDLED_VERSION"
 
 # Pre-seed the QML modules the app imports but linuxdeploy-plugin-qt's bundle

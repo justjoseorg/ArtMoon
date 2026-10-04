@@ -67,7 +67,7 @@ jobs:
             build-essential cmake ninja-build pkgconf \
             python3 python3-pip python-is-python3 \
             bison flex file libssl-dev zlib1g-dev \
-            linux-tools-common
+            patchelf
           # python-is-python3: shaderc's build script (built from source below) is
           # invoked as `env python`, and jammy has no bare `python`.
           # file: on every runner image, absent from bare jammy; linuxdeploy uses it to
@@ -81,12 +81,18 @@ jobs:
           # jammy's is OpenSSL 3.0.2, which is what aqt's Qt 6.8.3 was built against.
           # zlib1g-dev: same argument, added in the same breath rather than spending a
           # second 12-minute run discovering it. It cannot reject anything.
-          # linux-tools-common: it is what ships /usr/bin/usbip on Ubuntu, and the AppImage
-          # build now bundles that tool so a machine without one still has it. Note the name:
-          # there is no `usbip` package on Ubuntu at all, and asking for one is a 40-minute
-          # build that dies at apt. (Arch calls it `usbip`, Fedora calls it `usbip`, Debian
-          # calls it `usbip` — Ubuntu is the odd one out, which is exactly why this is written
-          # down here rather than remembered.)
+          # patchelf: gives the bundled usbip an $ORIGIN rpath so it finds the libusbip.so.0
+          # travelling beside it. Without it the pair does not start even when sitting in the
+          # same directory - verified in a jammy container.
+          # NOT linux-tools-common, which is where this started. It is the only thing on Ubuntu
+          # that answers to `usbip` (there is no `usbip` package at all - Arch, Fedora and Debian
+          # all have one; Ubuntu is the odd one out) - but what it installs at /usr/bin/usbip is
+          # a BASH STUB that execs /usr/lib/linux-tools/$(uname -r)/usbip, a path that does not
+          # exist inside a container. So `command -v usbip` returned a shell script, and the
+          # AppImage would have shipped it: a share toggle that silently does nothing, on the one
+          # machine the bundle exists for. The real tool is built from the kernel tree in its own
+          # step below. CI run 37165636653 is where this was caught, by the guard in
+          # scripts/build-appimage.sh rather than by a user.
           # pkgconf, NOT pkg-config — a behavioural difference, not a rename. jammy's
           # `pkg-config` is the classic 0.29.2, which does not implement the `Provides:`
           # field; jammy's `pkgconf` does, and installing it takes over
@@ -385,6 +391,41 @@ jobs:
             --enable-decoder=av1,h264,hevc,vp9 --enable-hwaccels
           make -j$(nproc)
           sudo make install
+
+      - name: Checkout usbip tools
+        uses: actions/checkout@v5
+        with:
+          # Only the userspace half of the kernel's USB/IP tooling. The kernel tree is enormous;
+          # tools/usb/usbip is a handful of C files with its own autotools setup, and it builds in
+          # seconds. Pinned to a tag so the shipped tool cannot change under us between runs.
+          repository: torvalds/linux
+          ref: v6.6
+          path: deps/linux-usbip
+          filter: blob:none
+          sparse-checkout: tools/usb/usbip
+
+      - name: Build usbip
+        working-directory: deps/linux-usbip/tools/usb/usbip
+        run: |
+          # autoconf, automake, libtool and libudev-dev come from the Setup environment step
+          # above. This is the ONLY usbip the AppImage bundles - Ubuntu's linux-tools-common
+          # hands you a bash stub at /usr/bin/usbip, not a binary (see Bootstrap). `make install`
+          # puts the real one in /usr/local/sbin and libusbip.so.0 in /usr/local/lib, which is
+          # where scripts/build-appimage.sh looks for it, by name rather than by PATH order.
+          ./autogen.sh
+          ./configure
+          make -j$(nproc)
+          sudo make install
+          sudo ldconfig
+          # Fail here rather than 12 minutes later in the bundling step: prove the tool we just
+          # built is a real binary that runs, and says the version we expect.
+          file -b /usr/local/sbin/usbip | grep -q ELF
+          /usr/local/sbin/usbip version
+          # Tell the bundling step exactly which two files to carry rather than leaving it to
+          # find them. A library installed a moment ago is not in the loader's cache yet, so ldd
+          # answers "not found" for it - which is precisely how the first version of this failed.
+          echo "ARTMOON_USBIP_BIN=/usr/local/sbin/usbip" >> "$GITHUB_ENV"
+          echo "ARTMOON_USBIP_LIB=/usr/local/lib/libusbip.so.0" >> "$GITHUB_ENV"
 
       - name: Install linuxdeploy
         working-directory: dep_root/bin
