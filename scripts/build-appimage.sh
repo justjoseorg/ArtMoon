@@ -321,6 +321,44 @@ ls /usr/libexec/*.artmoon-new /usr/libexec/artmoon-usbip/*.artmoon-new >/dev/nul
     && fail "install left a temporary file beside a destination"
 rm -rf "$STAGE"
 
+# And the case that actually failed on a real machine.
+#
+# Everything above runs as root against a root-owned directory, where the ownership check is
+# trivially satisfied because 0 == 0. The gate was therefore green while the first real user's
+# first run refused its own payload — after a successful password prompt, with "that is not a
+# directory this app staged". A real first run is never the shape above: pkexec switches fully to
+# root and hands the caller's uid over in PKEXEC_UID, so the process is root while the directory
+# belongs to a person. That shape, and the security property that rests on it, are these checks.
+PKEXEC_CASE=$(mktemp -d /tmp/artmoon-install-XXXXXX) || fail "could not make a staging directory"
+chmod 700 "$PKEXEC_CASE"
+cp "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service"        "$PKEXEC_CASE/artmoon-input-service"
+cp "$DEPLOY_FOLDER/usr/share/polkit-1/actions/org.artmoon.input-service.policy" \
+                                                             "$PKEXEC_CASE/org.artmoon.input-service.policy"
+cp "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbip"          "$PKEXEC_CASE/usbip"
+cp "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/libusbip.so.0"  "$PKEXEC_CASE/libusbip.so.0"
+cp "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbipd"         "$PKEXEC_CASE/usbipd"
+chmod 600 "$PKEXEC_CASE"/*
+chown -R 1000:1000 "$PKEXEC_CASE"
+
+# The caller's own directory installs. This is the one that was broken.
+PKEXEC_UID=1000 "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" install --from "$PKEXEC_CASE" >/dev/null \
+    || fail "install refused the pkexec caller's own staging directory"
+[ "$(stat -c '%U:%G' /usr/libexec/artmoon-input-service)" = "root:root" ] \
+    || fail "the pkexec path left the helper not owned by root"
+
+# Another user's directory does not, or one user could plant a payload for another to approve.
+PKEXEC_UID=1001 "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" install --from "$PKEXEC_CASE" >/dev/null 2>&1 \
+    && fail "install accepted a staging directory belonging to a different uid"
+
+# No pkexec at all, and a directory that is not root's: there is no caller to trust, so refuse.
+env -u PKEXEC_UID "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" install --from "$PKEXEC_CASE" >/dev/null 2>&1 \
+    && fail "install accepted a user-owned directory with no pkexec caller"
+
+# A PKEXEC_UID that will not parse must fall back to getuid(), not to uid 0 or to trust.
+PKEXEC_UID=not-a-number "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" install --from "$PKEXEC_CASE" >/dev/null 2>&1 \
+    && fail "install accepted an unparseable PKEXEC_UID"
+rm -rf "$PKEXEC_CASE"
+
 # Pre-seed the QML modules the app imports but linuxdeploy-plugin-qt's bundle
 # step has historically missed when the host's Qt install lacks them (the 1.0.0
 # AppImage shipped without QtQuick/Shapes and bounced on launch on every

@@ -813,6 +813,32 @@ void revokeStaleRules(const std::string &keep, Firewall firewall)
 // of the machine's life. The user is approving their own payload either way — the difference is
 // that now they approve it once, and can see that the thing running is the thing being installed.
 
+// The uid of whoever asked for this to happen.
+//
+// It is NOT getuid(). pkexec does not keep the caller's real uid and run us with an effective
+// one — it switches fully to root, so getuid() here is 0 and the person who typed the password
+// is invisible to us. That mistake is why the first run of this feature refused its own payload
+// on the exporter, after a successful prompt, with "that is not a directory this app staged".
+//
+// pkexec puts the caller's uid in PKEXEC_UID, built by pkexec itself into a minimal environment
+// it constructs from scratch (pkexec.c saves a short whitelist of LC_* and SHELL, then appends
+// PKEXEC_UID), so the caller cannot set it — which is what makes it safe to trust, and better
+// than taking the uid as an argument, where any user could name any other user's directory.
+//
+// With no pkexec in the picture — root running us directly, which is what the build gate does —
+// there is no caller to distinguish from the process, and getuid() is the honest answer.
+uid_t invokingUid()
+{
+    const char *pkexec = std::getenv("PKEXEC_UID");
+    if (pkexec != nullptr && *pkexec != '\0') {
+        char *end = nullptr;
+        const long value = std::strtol(pkexec, &end, 10);
+        if (end != nullptr && *end == '\0' && value >= 0)
+            return static_cast<uid_t>(value);
+    }
+    return getuid();
+}
+
 // Directories we will read a payload from. The app stages into a 0700 directory it creates under
 // XDG_RUNTIME_DIR, or under /tmp when that is unset. Anything else is refused rather than
 // trusted — and the ownership check is what stops one user naming another user's directory.
@@ -827,9 +853,7 @@ bool stagingDirectoryIsOurs(const std::string &dir)
 
     struct stat st {};
     if (stat(dir.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) return false;
-    // getuid(), not geteuid(): under pkexec the real uid is the person who approved the prompt,
-    // and it is their directory this must be.
-    return st.st_uid == getuid();
+    return st.st_uid == invokingUid();
 }
 
 bool makeParentDirectories(const std::string &path)
