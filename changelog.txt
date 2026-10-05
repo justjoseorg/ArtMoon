@@ -19,7 +19,7 @@ Your own keyboard and mouse, inside the stream.
 **Good to know — 3**
 
 **Input**
-- **Input:** device sharing works with an **ArtLight host**. The machine you stream from has to be running ArtLight, which is the half that receives the device — other hosts are not supported at this time.
+- **Input:** device sharing works with an **[ArtLight](https://github.com/onaiaku/ArtLight) host**. The machine you stream from has to be running ArtLight, which is the half that receives the device — other hosts are not supported at this time.
 - **Input:** device sharing works over a **local network or a VPN, and nowhere else in this release**. Reaching it across the open internet is not supported yet — that is the next piece of work, not an oversight. Keep the two machines on the same network, or on a tunnel, and the app opens the port only for the machine it is serving and only while a stream is running.
 - **Input:** device sharing is **not behind any authentication at this time**. There is no password, no pairing step and no account — a device you switch on is offered to whatever can reach the port. That is the reason for the limit above, and the reason it should not be exposed to the internet. Authentication is planned; until it is here, treat this port the way you would treat any other unprotected service on your network.
 
