@@ -112,8 +112,8 @@ Source: "changelog.txt"; DestDir: "{app}"; Flags: ignoreversion
 ; {tmp} and deleteafterinstall: this is an installer, not something ArtMoon needs at
 ; runtime. Setup's own [Run] entries execute elevated, which is what usbipd-win needs —
 ; it installs a service, two drivers and its own TCP 3240 firewall rule — the last of
-; which is scoped to the local subnet, so AddUsbIpFirewallRule adds one of ours that
-; also works over a VPN. See that procedure for why.
+; which is scoped to the local subnet, so [Run] adds one of ours that also works over
+; a VPN. See the entries at the end of this section for why.
 Source: "build\vendor\{#UsbipdMsi}"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Icons]
@@ -163,6 +163,20 @@ Filename: "{sys}\msiexec.exe"; Parameters: "/i ""{tmp}\{#UsbipdMsi}"" /qn /nores
     StatusMsg: "Installing USB/IP device sharing support..."; \
     Tasks: usbipdwin; \
     Flags: runhidden waituntilterminated
+; Device sharing needs a rule that works off the LAN. usbipd-win makes its own for TCP
+; 3240, but scopes it to Scope="localSubnet": a peer on the far side of a VPN is not on
+; a local subnet, so the far end is refused and sharing fails over the tunnel with
+; nothing on screen to explain it. Delete-then-add, because netsh refuses a duplicate
+; name and an upgrade always finds the rule the previous install left behind. The
+; delete is deliberately ungated — a machine that has stopped asking for device sharing
+; should not keep the rule — and neither entry uses RunOnceId, which would stop the pair
+; refreshing on an upgrade. Both are allowed to fail: Inno only complains when a program
+; cannot be launched, not when it exits non-zero.
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""ArtMoon USB/IP"""; \
+    Flags: runhidden waituntilterminated
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""ArtMoon USB/IP"" dir=in action=allow protocol=TCP localport=3240 profile=any remoteip=any"; \
+    Tasks: usbipdwin; \
+    Flags: runhidden waituntilterminated
 
 [UninstallRun]
 ; Remove the input service before its files go. Stopping is allowed to fail — a service
@@ -172,8 +186,8 @@ Filename: "{sys}\sc.exe"; Parameters: "stop ArtMoonInputService"; \
     Flags: runhidden waituntilterminated; RunOnceId: "StopInputService"
 Filename: "{sys}\sc.exe"; Parameters: "delete ArtMoonInputService"; \
     Flags: runhidden waituntilterminated; RunOnceId: "DeleteInputService"
-; Our own 3240 rule (see AddUsbIpFirewallRule below). Unconditional: deleting a rule
-; that is not there is not an error, and usbipd-win does not clean ours up for us.
+; Our own 3240 rule (added in [Run] above; usbipd-win does not clean it up for us).
+; Unconditional: deleting a rule that is not there is not an error.
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""ArtMoon USB/IP"""; \
     Flags: runhidden waituntilterminated; RunOnceId: "DeleteUsbIpFirewallRule"
 
@@ -210,41 +224,10 @@ begin
          SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
-// ── The USB/IP listener's firewall entry ─────────────────────────────────────
-// usbipd-win makes its own rule for TCP 3240, but scopes it to Scope="localSubnet":
-// a peer on the far side of a VPN is not on a local subnet, so the far end is turned
-// away and device sharing fails over the tunnel with nothing to show for it. This
-// adds a rule of our own with no source restriction, which is what the server side
-// already ships (ArtLight Server's own rule is any-protocol, any-port, any-profile).
-//
-// Delete-then-add, not add: netsh refuses a duplicate name, and an upgrade always
-// finds the rule the previous install left behind. Both calls are allowed to fail —
-// nothing to delete on a first install is not an error, and Inno only complains when
-// a program cannot be launched, not when it exits non-zero.
-const
-  FirewallRuleName = 'ArtMoon USB/IP';
-
-procedure AddUsbIpFirewallRule;
-var
-  ResultCode: Integer;
-begin
-  Exec(ExpandConstant('{sys}\netsh.exe'),
-       'advfirewall firewall delete rule name="' + FirewallRuleName + '"',
-       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{sys}\netsh.exe'),
-       'advfirewall firewall add rule name="' + FirewallRuleName + '"' +
-       ' dir=in action=allow protocol=TCP localport=3240 profile=any remoteip=any',
-       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-end;
-
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
     InstallInputService;
-  // ssDone, not ssPostInstall: [Run] installs usbipd-win between the two, and the rule
-  // is only wanted when the user asked for device sharing in the first place.
-  if (CurStep = ssDone) and WizardIsTaskSelected('usbipdwin') then
-    AddUsbIpFirewallRule;
 end;
 
 // A running service holds its own executable open, so an upgrade cannot replace the file
