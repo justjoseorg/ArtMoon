@@ -86,6 +86,13 @@ ArtMoon works with any Moonlight-compatible host, but **it works best with ArtLi
 - **🆕 Shared clipboard** — copy here, paste there, both ways, up to 32 KB at a time. Off until you switch it on, and the host can refuse. Passwords stay out of the other side's history
 - **Less work for the GPU at 4K** — frames reach the screen from wherever they were decoded, instead of being copied across the machine first
 
+**🆕 USB device sharing — your own hardware, inside the stream**
+- **The real device, not a pretend one** — *Settings → Input* lists the USB hardware plugged into this machine, each with a name, a vendor and an Off/On switch. Switch one on and it is handed to the machine you are streaming from, so the game is talking to the *physical* device: nothing is injected, which is what gets input into a game that ignores ordinary streamed input
+- **Not only keyboards and mice** — a USB drive works the same way. Plug it in here, switch it on, start a stream, and it appears on the far machine with its files browsable and copyable in both directions, as though it were plugged in there
+- **Yours until the stream ends** — nothing is shared until you switch something on. A device is lent for the session and handed back when it finishes, and the list on its own changes nothing about your devices
+- **Needs [ArtLight](https://github.com/onaiaku/ArtLight) at the far end** — the host you stream from is the half that receives the device. Other hosts are not supported for this yet
+- **Local network or VPN only, and no authentication yet** — this release does not reach across the open internet, and there is **no password, no pairing step and no account** on it: a device you switch on is offered to whatever can reach the port. Keep both machines on the same network or on a tunnel, and do not expose it. Authentication comes before anything wider
+
 **⬆️ Built-in updater**
 - ArtMoon checks GitHub releases and tells you when a new version is out — one press of **Update Now** and it updates itself: download, quit, install, relaunch. No manual downloads, no terminal on Windows
 - **Linux** reuses the one-line install script under the hood, so updating is the same command as installing
