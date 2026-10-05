@@ -1,5 +1,6 @@
 #include "usbipdevices.h"
 #include "usbipdevicelist.h"
+#include "vendorengine.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -237,10 +238,42 @@ UsbIpDevices::UsbIpDevices(QObject *parent)
 
     m_SettleTimer.setSingleShot(true);
     connect(&m_SettleTimer, &QTimer::timeout, this, &UsbIpDevices::settle);
+
+    /*
+     * The linger — TEN MINUTES (Nik's call, 2026-10-05).
+     *
+     * The engine is not put back the moment a device comes home, because that thrashes: step out
+     * of a stream to check something, step back in two minutes later, and the engine has been
+     * stopped and restarted in between — over and over, if the person keeps dipping in and out.
+     * Its process tree takes around thirty seconds to come up, so a quick re-take kills a
+     * HALF-STARTED engine, and what repeatedly interrupting its startup does is not known. A
+     * timer removes the question: come back inside the window and the engine never returned at
+     * all, so nothing happened.
+     */
+    m_VendorLingerTimer.setSingleShot(true);
+    m_VendorLingerTimer.setInterval(10 * 60 * 1000);
+    connect(&m_VendorLingerTimer, &QTimer::timeout, this, &UsbIpDevices::restoreVendorEngine);
+
+    /*
+     * And the crash case, first thing. If a previous run stopped an engine and then died before
+     * putting it back, this is the only thing left that will ever do so — nothing on the machine
+     * restarts it, which was measured rather than assumed.
+     */
+    honourRecordedVendorPause();
+
     refresh();
 }
 
-UsbIpDevices::~UsbIpDevices() = default;
+UsbIpDevices::~UsbIpDevices()
+{
+    /*
+     * Closing ArtMoon must not strand the user's vendor software.
+     *
+     * The linger is deliberately not honoured here: at quit there is no "they might come back in
+     * a minute", and a paused engine is a visible absence the user never asked for.
+     */
+    restoreVendorEngine();
+}
 
 UsbIpDevices *UsbIpDevices::get(QQmlEngine *qmlEngine)
 {
@@ -857,6 +890,23 @@ void UsbIpDevices::watchForPeer()
         if (handBack) {
             reconcileWithService(QStringList(), false);
         }
+
+        /*
+         * Nothing of ours is out, so this is where the vendor engine starts its way back — on a
+         * timer, and only once.
+         *
+         * ONCE is load-bearing. Every idle poll comes through here, so restarting the timer on
+         * each one would postpone the restore for as long as ArtMoon stayed open and the engine
+         * would never come back at all. It is armed when it is not already counting, and the
+         * restore clears m_VendorStopped, which is what stops it being armed again afterwards.
+         *
+         * Armed even when the hand-back above did not land, because putting the user's software
+         * back is the safe direction to fail in. An engine left paused is a keyboard with no
+         * macros and a mouse with no lighting, and nobody asked for that.
+         */
+        if (!m_VendorStopped.isEmpty() && !m_VendorLingerTimer.isActive()) {
+            m_VendorLingerTimer.start();
+        }
         return;
     }
 
@@ -902,6 +952,23 @@ void UsbIpDevices::watchForPeer()
     }
 
     if (m_PeerAttempts >= kPeerAttempts) {
+        return;
+    }
+
+    /*
+     * The engine goes out of the way HERE — after every guard above has agreed this take is
+     * really going to be asked for, and immediately before the bind.
+     *
+     * That order is the entire requirement. A device cannot be shared while its vendor engine is
+     * up, and an engine that moves aside after the bind has already lost the race.
+     */
+    m_VendorLingerTimer.stop();
+    if (!ensureVendorEngineClear()) {
+        /*
+         * Nothing is bound, deliberately. ensureVendorEngineClear() has set the reason to show,
+         * and binding anyway is what produces the flap — a device visibly bouncing in and out of
+         * the user's hand while the row claims it was taken.
+         */
         return;
     }
 
@@ -1284,6 +1351,16 @@ void UsbIpDevices::settle()
  */
 QString UsbIpDevices::describeToggleFailure() const
 {
+    /*
+     * A refusal whose reason we already know is reported as itself. The generic text below is
+     * what to say when the machine will not explain, and reaching for it while a named program is
+     * holding the device would be the same fault as "Not shared yet": a blank where an answer was
+     * available.
+     */
+    if (!m_VendorReason.isEmpty()) {
+        return m_VendorReason;
+    }
+
     const QString names = wantedBusids().join(QStringLiteral(", "));
 
 #ifdef Q_OS_WIN32
@@ -1298,6 +1375,146 @@ QString UsbIpDevices::describeToggleFailure() const
 
     return tr("%1 did not switch on. If something on this PC is using it, close that first, "
               "then try again.").arg(names);
+}
+
+/*
+ * Move the vendor engine out of the way, or explain why it will not move.
+ *
+ * The measurements behind this live in vendorengine.h; what matters here is the ordering and the
+ * failure behaviour.
+ *
+ * ORDERING — this runs immediately before the bind and nowhere else. Not at the tick: a tick is
+ * intent, nothing is attached at tick time, and stopping there would take the user's keyboard
+ * software away for as long as the tick stood, which could be days. The engine only has to be
+ * gone for the seconds a device is actually attached.
+ *
+ * FAILING CLOSED — if the engine will not go, nothing is bound and the reason is put where the
+ * row can show it. A bind attempted on a live engine is not a partial success; it is the flap,
+ * and it reads in the list exactly like a take that worked.
+ */
+bool UsbIpDevices::ensureVendorEngineClear()
+{
+    const QString running = VendorEngine::runningEngine();
+
+    if (running.isEmpty()) {
+        /*
+         * An engine that was already closed when we looked is never started again, because we did
+         * not stop it: m_VendorStopped stays empty, so no restore is owed. Without that rule a
+         * release would launch software the user had deliberately left closed.
+         */
+        if (!m_VendorReason.isEmpty()) {
+            m_VendorReason.clear();
+            emit devicesChanged();
+        }
+        return true;
+    }
+
+    if (m_VendorStopped != running) {
+        /*
+         * Written down BEFORE the stop, which is the whole reason the record exists: if this
+         * process dies between the two, nothing else on the machine will ever start this engine
+         * again and the user is left without their keyboard software until they work out why.
+         */
+        recordVendorPause(running);
+    }
+
+    if (!VendorEngine::stopRunningEngine()) {
+        m_VendorReason = tr("%1 is running and would not close, so this device cannot be shared. "
+                            "Close it yourself, then tick it again.")
+                             .arg(VendorEngine::displayName(running));
+        // Nothing was stopped, so nothing is owed — the record must not outlive the attempt.
+        clearVendorPause();
+        emit devicesChanged();
+        return false;
+    }
+
+    if (m_VendorStopped != running) {
+        m_VendorStopped = running;
+        emit devicesChanged();
+    }
+    return true;
+}
+
+/* Start the paused engine again. Idempotent, and safe to call when nothing is paused. */
+void UsbIpDevices::restoreVendorEngine()
+{
+    if (m_VendorStopped.isEmpty()) {
+        return;
+    }
+
+    m_VendorLingerTimer.stop();
+
+    const bool launched = VendorEngine::restoreEngine();
+    if (!launched && VendorEngine::runningEngine().isEmpty()) {
+        /*
+         * The launch did not take. The record is deliberately left in place, so the next idle
+         * poll re-arms the linger and tries again, rather than forgetting an engine that is still
+         * down. Trying again is the safe direction: the failure this can cause is a repeated
+         * launch attempt, and the failure the other way is a user with no macros and no lighting
+         * and no idea why.
+         */
+        m_VendorReason = tr("%1 could not be started again. Open it from the Start menu when you "
+                            "are finished sharing.")
+                             .arg(VendorEngine::displayName(m_VendorStopped));
+        emit devicesChanged();
+        return;
+    }
+
+    m_VendorStopped.clear();
+    m_VendorReason.clear();
+    clearVendorPause();
+    emit devicesChanged();
+}
+
+/*
+ * Where the pause is written down.
+ *
+ * One small file rather than a settings key: it describes a transient fact — "this engine was
+ * stopped and has not been put back" — and it must stop existing the moment that stops being
+ * true. A setting invites somebody to leave it set.
+ */
+QString UsbIpDevices::vendorPausePath()
+{
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    return dir + QStringLiteral("/vendor-engine-paused.ini");
+}
+
+void UsbIpDevices::recordVendorPause(const QString &engineName)
+{
+    QSettings record(vendorPausePath(), QSettings::IniFormat);
+    record.setValue(QStringLiteral("engine"), engineName);
+    record.sync();
+}
+
+void UsbIpDevices::clearVendorPause()
+{
+    QFile::remove(vendorPausePath());
+}
+
+/*
+ * The crash case, and the reason the record is written before the stop rather than after it.
+ *
+ * If a previous run stopped an engine and died before putting it back, this is the only thing
+ * left that knows. Nothing on the machine will start that engine again — measured on the mini PC
+ * rather than assumed: no service, no watchdog, no scheduled task — so a forgotten pause means a
+ * keyboard with no macros until the user works out what happened.
+ *
+ * Restores only when the engine is genuinely down. A record with the engine running means either
+ * the stop never landed or the user has since started it themselves; there is nothing to do
+ * either way, and launching a second copy of it would be worse than the problem.
+ */
+void UsbIpDevices::honourRecordedVendorPause()
+{
+    QSettings record(vendorPausePath(), QSettings::IniFormat);
+    const QString engineName = record.value(QStringLiteral("engine")).toString();
+    if (engineName.isEmpty()) {
+        return;
+    }
+
+    if (VendorEngine::runningEngine().isEmpty()) {
+        VendorEngine::restoreEngine();
+    }
+    clearVendorPause();
 }
 
 /* True while any device's label disagrees with the machine. */

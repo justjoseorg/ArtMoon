@@ -212,6 +212,19 @@ jobs:
           echo "DEP_ROOT=$PWD/dep_root" >> "${GITHUB_ENV}"
           echo "$PWD/dep_root/bin" >> "${GITHUB_PATH}"
 
+      - name: Exporter logic tests
+        run: |
+          # The exporter's parsing and its vendor-engine handling, checked before anything is
+          # built. Both are pure logic, and both are the parts that cannot be verified on
+          # hardware: a bind that half-fails reads identically to one that worked, and a Run-key
+          # value parsed slightly wrong launches the wrong program. Fixture-based, so no USB/IP,
+          # no hardware and no administrator rights are needed.
+          #
+          # Qt is the dependency, which is why this sits here rather than with the guard checks
+          # above — those run before Qt exists.
+          cd tests/usbip
+          ./run-vendorengine.sh
+
       - name: Build Qt Virtual Keyboard
         run: |
           # The app's on-screen keyboard (app/gui/OnScreenKeyboard.qml) IS this module, and

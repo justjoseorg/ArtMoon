@@ -108,6 +108,24 @@ class UsbIpDevices : public QObject
     /* True while the install is in flight, so the UI can say what is happening. */
     Q_PROPERTY(bool installingService READ installingService NOTIFY installingServiceChanged)
 
+    /*
+     * True while a vendor engine is held down so a device can be shared.
+     *
+     * The engine is stopped for the seconds a device is attached, not for as long as a device is
+     * ticked: a tick is intent and nothing is attached at tick time, so tying the stop to the
+     * tick would take the user's keyboard software away for days. See the .cpp.
+     */
+    Q_PROPERTY(bool vendorPaused READ vendorPaused NOTIFY devicesChanged)
+
+    /*
+     * What is standing in the way of a share, ready to show. Empty when nothing is.
+     *
+     * Set when an engine that fights the stub driver cannot be moved out of the way — refused to
+     * stop, or came back — so the row can say which program is holding the device instead of
+     * reporting a bind that did not take as one that is still landing.
+     */
+    Q_PROPERTY(QString vendorReason READ vendorReason NOTIFY devicesChanged)
+
 public:
     explicit UsbIpDevices(QObject *parent = nullptr);
     ~UsbIpDevices() override;
@@ -123,6 +141,8 @@ public:
     QString toggleFailure() const { return m_ToggleFailure; }
     bool canInstallService() const { return m_CanInstallService; }
     bool installingService() const { return m_InstallingService; }
+    bool vendorPaused() const { return !m_VendorStopped.isEmpty(); }
+    QString vendorReason() const { return m_VendorReason; }
 
     /* Re-run the local enumeration and rebuild `devices`. Safe to call at any time. */
     Q_INVOKABLE void refresh();
@@ -217,6 +237,32 @@ private:
     bool m_HelperMatchKnown = false;
     bool m_HelperMatches = false;
 
+    /*
+     * Move the vendor engine out of the way, or report why it will not move.
+     *
+     * Called on the way in to a take, immediately before the bind is asked for: the engine has to
+     * be gone before the bind, and this is the only place where that ordering is guaranteed.
+     * Returns true when nothing is standing in the way afterwards.
+     */
+    bool ensureVendorEngineClear();
+
+    /* Start the paused engine again. Idempotent, and safe to call when nothing is paused. */
+    void restoreVendorEngine();
+
+    /*
+     * The pause, written down.
+     *
+     * Recorded BEFORE the engine is stopped, because if this process dies between the two — and
+     * it can, mid-take — nothing else on the machine will ever start that engine again. Measured
+     * on the mini PC: no service, no watchdog and no scheduled task restarts it, so a crash here
+     * would leave the user without their keyboard software until they noticed and did it by hand.
+     * Written first, cleared after the restore, and read once at startup.
+     */
+    void recordVendorPause(const QString &engineName);
+    void clearVendorPause();
+    void honourRecordedVendorPause();
+    static QString vendorPausePath();
+
     QVariantList m_Devices;
     bool m_Available = false;
 
@@ -235,6 +281,24 @@ private:
     QString m_ToggleFailure;
     bool m_CanInstallService = false;
     bool m_InstallingService = false;
+
+    /*
+     * The vendor engine we moved out of the way, by name. Empty means we have moved nothing and
+     * no restore is owed.
+     *
+     * Also the flag that makes restore safe: an engine that was already closed when we looked is
+     * never started again, because we did not stop it. Without that, a release would launch
+     * software the user had chosen to keep closed.
+     */
+    QString m_VendorStopped;
+    QString m_VendorReason;
+
+    /*
+     * The linger. Armed when a device comes home, cancelled by the next take, and what fires the
+     * restore when the user does not come back. See kVendorLingerMs in the .cpp for why this is a
+     * timer rather than an immediate restore.
+     */
+    QTimer m_VendorLingerTimer;
 
     QTimer m_SettleTimer;
     int m_SettleTries = 0;

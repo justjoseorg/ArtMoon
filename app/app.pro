@@ -231,6 +231,7 @@ SOURCES += \
     diagnostics/gputrace.cpp \
     usbip/usbipdevicelist.cpp \
     usbip/usbipdevices.cpp \
+    usbip/vendorengine.cpp \
     wm.cpp
 
 HEADERS += \
@@ -302,7 +303,8 @@ HEADERS += \
     streaming/video/pyrowave/pyrowaveprotocol.h \
     backend/appupdate.h \
     usbip/usbipdevicelist.h \
-    usbip/usbipdevices.h
+    usbip/usbipdevices.h \
+    usbip/vendorengine.h
 
 # Platform-specific renderers and decoders
 ffmpeg {
