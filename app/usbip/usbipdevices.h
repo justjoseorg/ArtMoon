@@ -230,6 +230,8 @@ private:
     QElapsedTimer m_PeerSeen;     /* when the helper last named a peer; see kPeerGraceMs */
     QString m_ReachablePeer;      /* as last reported by the helper, empty when unreachable */
     QString m_LastPeer;           /* the one the attempts below belong to */
-    QString m_OpenedForPeer;      /* the one we have already opened the connection for */
+    QString m_OpenedForStream;    /* what the port is already open for: the wanted set, joined.
+                                   * Keyed on the stream rather than on a peer address, because the
+                                   * peer cannot appear until this is open. See watchForPeer(). */
     int m_PeerAttempts = 0;
 };

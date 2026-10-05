@@ -802,7 +802,7 @@ void UsbIpDevices::watchForPeer()
     // again.
     if (!streaming) {
         const bool handBack = m_CanShare && anythingExported();
-        m_OpenedForPeer.clear();
+        m_OpenedForStream.clear();
         m_LastPeer.clear();
         m_PeerAttempts = 0;
         if (handBack) {
@@ -811,22 +811,44 @@ void UsbIpDevices::watchForPeer()
         return;
     }
 
-    if (!m_CanShare || wanted.isEmpty() || m_ReachablePeer.isEmpty()) {
-        m_OpenedForPeer.clear();
+    if (!m_CanShare || wanted.isEmpty()) {
+        m_OpenedForStream.clear();
         m_LastPeer.clear();
         m_PeerAttempts = 0;
         return;
     }
 
-    // A different machine — or the same one arriving again after a gap — starts over.
+    /*
+     * The port is opened for the stream just launched — NOT for a peer we have managed to
+     * observe — and that distinction is the whole of this fix.
+     *
+     * This used to require m_ReachablePeer, which the helper only reports once the far machine
+     * has a stream ESTABLISHED to us. But the far machine cannot get that far until it can ask
+     * what we are offering, and it asks on the port whose firewall rule is opened right here. So
+     * the rule waited for a peer, the peer waited for the rule, and nothing ever moved: the
+     * stream sat on the far side until its 20-second budget ran out and died with error 110.
+     * From here it looked like "waiting for the other machine". From there it looked like a dead
+     * port. Neither end was wrong, and the machine was fine.
+     *
+     * The address is known the moment a stream is launched — the person has just picked it —
+     * which is seconds before the far machine asks. So the trigger is the launch, and the peer is
+     * something we notice afterwards rather than something we wait on.
+     *
+     * `streaming` above is what keeps this honest: this runs only while a stream is actually
+     * starting, so the port still does not sit open on a machine with nothing happening. That was
+     * the security decision and it is unchanged — what changed is which moment counts as
+     * "starting". It is the launch, not the arrival.
+     */
+    const QString opened = wanted.join(QLatin1Char(','));
     if (m_ReachablePeer != m_LastPeer) {
+        // A different machine has named itself. Nothing to reopen — what is open is keyed on what
+        // we are offering, not on who is asking — but the attempts belong to the new one.
         m_LastPeer = m_ReachablePeer;
-        m_OpenedForPeer.clear();
         m_PeerAttempts = 0;
     }
 
-    // Already open for this one. Re-running would re-derive the same rule on every poll.
-    if (m_OpenedForPeer == m_ReachablePeer) {
+    // Already open for exactly this set. Re-running would re-derive the same rule every poll.
+    if (m_OpenedForStream == opened) {
         return;
     }
 
@@ -835,7 +857,7 @@ void UsbIpDevices::watchForPeer()
     }
 
     if (reconcileWithService(wanted, false)) {
-        m_OpenedForPeer = m_ReachablePeer;
+        m_OpenedForStream = opened;
     }
     else {
         ++m_PeerAttempts;
