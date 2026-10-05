@@ -43,6 +43,29 @@ jobs:
           ARTMOON_QT_BIN: '${{ runner.workspace }}\Qt\6.8.3\msvc2022_64\bin'
         run: ./scripts/ci-deploy-windows.ps1
 
+      - name: Fetch the bundled USB/IP engine (usbipd-win)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # ArtMoon cannot share a device without usbipd-win: it reads `usbipd list` and runs
+          # `usbipd bind` through the input service. It is carried rather than assumed, so a PC
+          # that has never seen USB/IP still gets a working USB tab instead of a dead end.
+          # Version and hash are pinned because this file is handed to msiexec with
+          # administrator rights on a user's machine — a silently substituted download would
+          # be the whole attack, so a mismatch is fatal rather than a warning.
+          $version = '5.3.0'
+          $sha256  = '1C984914AEC944DE19B64EFF232421439629699F8138E3DDC29301175BC6D938'
+          $name    = "usbipd-win_${version}_x64.msi"
+          $dest    = 'build/vendor'
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          $out = Join-Path $dest $name
+          Invoke-WebRequest -Uri "https://github.com/dorssel/usbipd-win/releases/download/v$version/$name" -OutFile $out
+          $got = (Get-FileHash $out -Algorithm SHA256).Hash
+          if ($got -ne $sha256) {
+            throw "usbipd-win $name hash mismatch: got $got, expected $sha256"
+          }
+          Write-Host "usbipd-win $version verified: $((Get-Item $out).Length) bytes, sha256 $got"
+
       - name: Install Inno Setup 7.1.0
         shell: pwsh
         run: |
@@ -57,6 +80,8 @@ jobs:
           $iscc = Get-ChildItem "C:\Program Files (x86)\Inno Setup 7\ISCC.exe", "C:\Program Files\Inno Setup 7\ISCC.exe", "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $iscc) { throw "Inno Setup compiler (ISCC.exe) was not found" }
           Write-Host "Using ISCC: $($iscc.FullName)"
+          # ArtMoon.iss hard-errors if the USB/IP payload is missing, so a compile that
+          # succeeds is a compile that carries it - no separate check needed here.
           & $iscc.FullName ArtMoon.iss
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed with exit code $LASTEXITCODE" }
           $setupExe = Get-ChildItem "build/installer/*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1

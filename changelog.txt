@@ -14,10 +14,11 @@ Your own keyboard and mouse, inside the stream.
 
 **Settings**
 - **Input:** a new USB devices section lists the USB hardware plugged into this PC — name, vendor and bus id — and says of each one whether it is currently offered to another machine over the network. This is the groundwork for sending your real keyboard and mouse into a stream, which is what gets input into a game that ignores ordinary streamed input: nothing is injected, because the game is talking to the physical device. You will find it under Settings, Input.
-- **Input:** every device in that list has an Off/On switch for sharing it. Sharing needs the input service, which is a separate privileged piece arriving in a following build — until it is installed the switches are shown greyed with the reason written beside them, so nothing here can look as though it worked when it did not. Nothing is shared until you turn something on; the list on its own changes nothing about your devices.
+- **Input:** every device in that list has an Off/On switch for sharing it. Turning one on hands that device to the machine you are streaming from, and it is gone from this one until the stream ends. Sharing needs the input service — a small privileged piece that arrives with this build: the Windows setup installs it, and on Linux ArtMoon places it itself the first time you need it, with a single password prompt. Until it is in place the switches are shown greyed with the reason written beside them, so nothing here can look as though it worked when it did not. Nothing is shared until you turn something on; the list on its own changes nothing about your devices.
 
 **Under the hood**
 - The device list is read from the sharing tool's own output on each platform, with the parsers pinned against captures taken from real machines so that a change in either format cannot pass unnoticed.
+- The USB/IP engine ArtMoon needs in order to export a device now ships inside both installers instead of being assumed present. The Windows setup carries usbipd-win behind a Device sharing box that is ticked by default, and the Linux AppImage carries the `usbip` client along with the library it links against. A machine that has never had either can share a device without first being sent off to install something.
 
 --------------------------------------
 **Version 1.7.2 (02/10/2026)**

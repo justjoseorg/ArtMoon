@@ -116,6 +116,29 @@ for BAD in '9-3; rm -rf /' '../9-3' 'a-3' '' ; do
         fail "The input service accepted a bad busid: '$BAD'"
     fi
 done
+
+# One privileged call now places every file, so that call reads a payload from a directory the
+# unprivileged app names. It may only ever read from one the app staged, and a false accept here
+# means a program running as root taking its instructions from a path an attacker chose. Every
+# one of these has to be refused, and as root — which is what this container is — so the check
+# being tested is the directory one and not the privilege gate in front of it.
+for BAD in '/etc' '/usr/local' '/usr/libexec' '/tmp' '/tmp/artmoon-install-x/../../etc' \
+           'relative/path' '' ; do
+    if "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" install --from "$BAD" >/dev/null 2>&1; then
+        fail "The input service installed from a directory it should not: '$BAD'"
+    fi
+done
+if "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" install >/dev/null 2>&1; then
+    fail "install ran with no --from"
+fi
+if "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" install --from /tmp/artmoon-install-x --want 1-6 >/dev/null 2>&1; then
+    fail "install accepted a busid"
+fi
+if "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" reconcile --from /tmp/artmoon-install-x >/dev/null 2>&1; then
+    fail "reconcile accepted --from"
+fi
+
+
 echo "Input service built, static, and refusing what it must refuse"
 
 # The polkit action that lets the app reach the helper without a password prompt on every
@@ -139,6 +162,235 @@ python3 -c "import xml.etree.ElementTree as E,sys; E.parse(sys.argv[1])" \
     "$DEPLOY_FOLDER/usr/share/polkit-1/actions/org.artmoon.input-service.policy" \
     || fail "The polkit action is not valid XML - polkit would ignore it and prompt every time"
 echo "Input service polkit action bundled and cross-checked against the helper path"
+
+# The usbip client, and the library it links against.
+#
+# ArtMoon exports a device by running `usbip bind`. Until now that tool was assumed to be on
+# the host, and on a fresh machine it is not - which is the one failure that looks like the
+# feature being broken rather than a package being absent. So it ships with us.
+#
+# TWO files, not one: usbip links libusbip.so.0, which the host's copy would otherwise supply
+# from wherever it lives. libudev and libc are deliberately NOT carried - every system able to
+# run this app has both, and putting a libc inside a root-owned tool is how you get a loader
+# that will not start.
+#
+# The helper prefers the host's usbip when there is one, because a distro's tool is built with
+# the kernel that distro ships and that is a matched pair we cannot beat. This copy is the
+# fallback, for the machine that has none.
+echo Bundling the usbip client
+# WHICH usbip, and why it is no longer simply `command -v usbip` (root-caused 2026-10-04, CI run
+# 37165636653). On Ubuntu there is no `usbip` package: the name is provided by
+# linux-tools-common, and what that installs at /usr/bin/usbip is a BASH STUB, not a binary. It
+# execs /usr/lib/linux-tools/$(uname -r)/usbip - a path that does not exist inside a container -
+# so `command -v usbip` in this build handed back a shell script. It copied perfectly, and ldd
+# said "not a dynamic executable". Without the guard below, the AppImage would have shipped a
+# usbip that cannot run at all, and the first anyone would know is a share toggle on a Linux
+# machine quietly doing nothing.
+#
+# So the workflow BUILDS the real tool from the kernel tree (tools/usb/usbip) and installs it to
+# /usr/local/sbin. It is looked for there BY NAME, not by PATH order: PATH is exactly the thing
+# that handed us the stub.
+USBIP_SRC="${ARTMOON_USBIP_BIN:-}"
+if [ -z "$USBIP_SRC" ]; then
+    for candidate in /usr/local/sbin/usbip /usr/local/bin/usbip; do
+        if [ -x "$candidate" ]; then USBIP_SRC="$candidate"; break; fi
+    done
+fi
+[ -n "$USBIP_SRC" ] || USBIP_SRC=$(command -v usbip || true)
+[ -n "$USBIP_SRC" ] \
+    || fail "no usbip to bundle - build one first (see the Build usbip step in .github/workflows/build-linux.yml)"
+# A real binary, not the stub. `file` says so outright, and this is the check that names the
+# actual cause rather than failing later with something that reads like a code bug.
+file -b "$USBIP_SRC" | grep -q "ELF" \
+    || fail "usbip at $USBIP_SRC is not an ELF binary. On Ubuntu that path is linux-tools-common's bash stub, which cannot run inside a container - build the real one instead"
+mkdir -p "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip"
+cp "$USBIP_SRC" "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbip" \
+    || fail "Failed to bundle usbip"
+# The library, by name first. `ldd` alone is not enough here and the reason is worth keeping:
+# a library that was installed a moment ago is not in the loader's cache yet, so ldd answers
+# "libusbip.so.0 => not found" for a pair that is perfectly fine. That is what this check did
+# on the first run after the tool moved from apt to a local build. So: the env var the workflow
+# sets, then the usual install locations, and only then ldd.
+USBIP_LIB="${ARTMOON_USBIP_LIB:-}"
+if [ -z "$USBIP_LIB" ]; then
+    for candidate in /usr/local/lib/libusbip.so.0 /usr/lib/libusbip.so.0 \
+                     "$(dirname "$USBIP_SRC")/libusbip.so.0"; do
+        if [ -f "$candidate" ]; then USBIP_LIB="$candidate"; break; fi
+    done
+fi
+if [ -z "$USBIP_LIB" ]; then
+    USBIP_LIB=$(ldd "$USBIP_SRC" 2>/dev/null | awk '/libusbip\.so/ { print $3; exit }')
+fi
+[ -n "$USBIP_LIB" ] && [ -f "$USBIP_LIB" ] \
+    || fail "usbip links no usable libusbip.so - the bundled copy would not start on a host that has none"
+cp "$USBIP_LIB" "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/libusbip.so.0" \
+    || fail "Failed to bundle libusbip.so.0"
+chmod 755 "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbip"
+chmod 644 "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/libusbip.so.0"
+# Make the two find each other WITHOUT being told. usbip links libusbip.so.0 by soname and is
+# built with no rpath, so a bare copy sitting beside its own library still fails:
+#   ./usbip: error while loading shared libraries: libusbip.so.0: cannot open shared object file
+# (verified in a jammy container). $ORIGIN makes it look in its own directory, so the pair is
+# self-contained wherever it lands and whoever runs it - which is the entire point of carrying
+# it, because the machine it exists for is the one with no usbip AND no libusbip.
+patchelf --set-rpath '$ORIGIN' "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbip" \
+    || fail "Failed to give the bundled usbip an \$ORIGIN rpath"
+# Prove the pair runs FROM WHERE IT NOW SITS, with a deliberately CLEAN environment: no
+# LD_LIBRARY_PATH, nothing but what a host without usbip would have. That is what makes this a
+# test of the rpath rather than a test of whoever set the variable up. A copy that cannot start
+# is precisely the failure nobody would see until a user pressed a toggle - and note the
+# subcommand: `usbip version`, not `usbip --version`, which exits non-zero with "invalid option"
+# and would fail this gate on a perfectly good binary.
+USBIP_BUNDLED_VERSION=$(env -u LD_LIBRARY_PATH "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbip" version 2>&1) \
+    || fail "The bundled usbip cannot run with a clean environment - its rpath or the loader is wrong"
+echo "usbip bundled and runnable: $USBIP_BUNDLED_VERSION"
+
+# The DAEMON, beside the client and for the same reason.
+#
+# `usbip bind` makes a device offerable; something has to be LISTENING on 3240 before any other
+# machine can actually attach it. On Windows that listener arrives with the usbipd-win installer,
+# which is why the Windows half never had to think about it. On Linux the daemon comes from the
+# distro's usbip package - which a fresh machine does not have, and whose unit ships DISABLED
+# even when it does. So the exporter was unreachable for exactly the user this feature is for:
+# verified on the z13 2026-10-04, where usbipd.service was `disabled` and `inactive`, nothing was
+# on 3240, and `usbip list -r` from the other machine could not connect at all.
+#
+# Same two-file trick as the client: usbipd links libusbip.so.0 by soname, so it travels beside
+# the library it already shares with the client and finds it through the same $ORIGIN rpath.
+echo Bundling the usbip daemon
+USBIPD_SRC="${ARTMOON_USBIPD_BIN:-}"
+if [ -z "$USBIPD_SRC" ]; then
+    for candidate in /usr/local/sbin/usbipd /usr/local/bin/usbipd /usr/sbin/usbipd; do
+        if [ -x "$candidate" ]; then USBIPD_SRC="$candidate"; break; fi
+    done
+fi
+[ -n "$USBIPD_SRC" ] \
+    || fail "no usbipd to bundle - it is built by the same 'make install' as usbip (sbin_PROGRAMS := usbip usbipd); see the Build usbip step in .github/workflows/build-linux.yml"
+file -b "$USBIPD_SRC" | grep -q "ELF" \
+    || fail "usbipd at $USBIPD_SRC is not an ELF binary"
+cp "$USBIPD_SRC" "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbipd" \
+    || fail "Failed to bundle usbipd"
+chmod 755 "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbipd"
+patchelf --set-rpath '$ORIGIN' "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbipd" \
+    || fail "Failed to give the bundled usbipd an \$ORIGIN rpath"
+# Gate it the way that proves the thing that actually matters, without starting a daemon in CI.
+# `usbipd` has no version flag - a bare or --help invocation is a daemon that cannot run as an
+# unprivileged CI user, so it would fail this gate on a perfectly good binary (the same trap as
+# `usbip --version`, which exits non-zero with "invalid option"). ldd resolves the loader without
+# entering main(), so it answers the real question - can the bundled daemon find its library from
+# where it now sits, with nothing set in the environment - and answers it safely.
+USBIPD_LDD_LINE=$(env -u LD_LIBRARY_PATH ldd "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbipd" 2>/dev/null \
+    | awk '/libusbip\.so\.0/ { print $1" -> "$3; exit }')
+[ -n "$USBIPD_LDD_LINE" ] \
+    || fail "The bundled usbipd cannot resolve libusbip.so.0 with a clean environment - its rpath or the loader is wrong"
+echo "usbipd bundled and resolves its library: $USBIPD_LDD_LINE"
+
+# And prove it does the thing, not only that it refuses. **This has to sit below every one of the
+# five, not beside the helper.** It reads all five out of the deploy folder, so anywhere above the
+# polkit action or the usbip bundling it is four `cannot stat`s and a failed build - which is
+# exactly what the first build of this gate did. The refusals above only ever touch the helper and
+# so can stay where the helper is built; this half cannot. Refusals alone would pass just as well
+# if the verb were a stub. The sources come from where this build put them, which is where the
+# app takes them from, so this is the real payload through the real code path.
+STAGE=$(mktemp -d /tmp/artmoon-install-XXXXXX) || fail "could not make a staging directory"
+chmod 700 "$STAGE"
+cp "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service"        "$STAGE/artmoon-input-service"
+cp "$DEPLOY_FOLDER/usr/share/polkit-1/actions/org.artmoon.input-service.policy" \
+                                                             "$STAGE/org.artmoon.input-service.policy"
+cp "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbip"          "$STAGE/usbip"
+cp "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/libusbip.so.0"  "$STAGE/libusbip.so.0"
+cp "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbipd"         "$STAGE/usbipd"
+chmod 600 "$STAGE"/*
+"$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" install --from "$STAGE" >/dev/null \
+    || fail "install could not place the files it was given"
+for DEST in /usr/libexec/artmoon-input-service \
+            /usr/share/polkit-1/actions/org.artmoon.input-service.policy \
+            /usr/libexec/artmoon-usbip/usbip /usr/libexec/artmoon-usbip/libusbip.so.0 \
+            /usr/libexec/artmoon-usbip/usbipd ; do
+    [ -e "$DEST" ] || fail "install left $DEST missing"
+    [ "$(stat -c '%U:%G' "$DEST")" = "root:root" ] || fail "install left $DEST not owned by root"
+done
+[ "$(stat -c '%a' /usr/libexec/artmoon-usbip/libusbip.so.0)" = "644" ] \
+    || fail "install gave the library the wrong mode"
+[ "$(stat -c '%a' /usr/libexec/artmoon-input-service)" = "755" ] \
+    || fail "install gave the helper the wrong mode"
+cmp -s "$STAGE/usbipd" /usr/libexec/artmoon-usbip/usbipd \
+    || fail "the installed daemon is not the bytes that were staged"
+# The atomic write must not leave its temporary behind, or every setup would litter /usr/libexec.
+ls /usr/libexec/*.artmoon-new /usr/libexec/artmoon-usbip/*.artmoon-new >/dev/null 2>&1 \
+    && fail "install left a temporary file beside a destination"
+rm -rf "$STAGE"
+
+# And the case that actually failed on a real machine.
+#
+# Everything above runs as root against a root-owned directory, where the ownership check is
+# trivially satisfied because 0 == 0. The gate was therefore green while the first real user's
+# first run refused its own payload — after a successful password prompt, with "that is not a
+# directory this app staged". A real first run is never the shape above: pkexec switches fully to
+# root and hands the caller's uid over in PKEXEC_UID, so the process is root while the directory
+# belongs to a person. That shape, and the security property that rests on it, are these checks.
+#
+# The app's own staging rule, replicated — including where the execute bit comes from.
+#
+# The app copied every file into a 0700 directory and then set 0600 on all of them, including the
+# helper, which is the one file that is going to be *run*. pkexec authorised correctly, logged the
+# command, failed to exec the file, and exited 126 — the same code it uses for a dismissed prompt,
+# so the app told the user their password dialog had been closed and set nothing up.
+#
+# Nothing above could catch that. This gate runs the helper out of the deploy folder, where it is
+# already executable, and never stages it the way the app does. So stage it the app's way, and run
+# it from there.
+APP_STAGE=$(mktemp -d /tmp/artmoon-install-XXXXXX) || fail "could not make a staging directory"
+chmod 700 "$APP_STAGE"
+stage_like_the_app() {
+    cp "$1" "$APP_STAGE/$2"
+    if [ -x "$1" ]; then chmod 700 "$APP_STAGE/$2"; else chmod 600 "$APP_STAGE/$2"; fi
+}
+stage_like_the_app "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" \
+                   artmoon-input-service
+stage_like_the_app "$DEPLOY_FOLDER/usr/share/polkit-1/actions/org.artmoon.input-service.policy" \
+                   org.artmoon.input-service.policy
+stage_like_the_app "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbip"         usbip
+stage_like_the_app "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/libusbip.so.0" libusbip.so.0
+stage_like_the_app "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbipd"        usbipd
+[ -x "$APP_STAGE/artmoon-input-service" ] \
+    || fail "the helper would be staged without permission to run"
+chown -R 1000:1000 "$APP_STAGE"
+PKEXEC_UID=1000 "$APP_STAGE/artmoon-input-service" install --from "$APP_STAGE" >/dev/null \
+    || fail "the helper could not be run from a directory staged the way the app stages it"
+[ "$(stat -c '%a' /usr/libexec/artmoon-usbip/usbipd)" = "755" ] \
+    || fail "the sharing service did not land executable"
+rm -rf "$APP_STAGE"
+
+PKEXEC_CASE=$(mktemp -d /tmp/artmoon-install-XXXXXX) || fail "could not make a staging directory"
+chmod 700 "$PKEXEC_CASE"
+cp "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service"        "$PKEXEC_CASE/artmoon-input-service"
+cp "$DEPLOY_FOLDER/usr/share/polkit-1/actions/org.artmoon.input-service.policy" \
+                                                             "$PKEXEC_CASE/org.artmoon.input-service.policy"
+cp "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbip"          "$PKEXEC_CASE/usbip"
+cp "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/libusbip.so.0"  "$PKEXEC_CASE/libusbip.so.0"
+cp "$DEPLOY_FOLDER/usr/libexec/artmoon-usbip/usbipd"         "$PKEXEC_CASE/usbipd"
+chmod 600 "$PKEXEC_CASE"/*
+chown -R 1000:1000 "$PKEXEC_CASE"
+
+# The caller's own directory installs. This is the one that was broken.
+PKEXEC_UID=1000 "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" install --from "$PKEXEC_CASE" >/dev/null \
+    || fail "install refused the pkexec caller's own staging directory"
+[ "$(stat -c '%U:%G' /usr/libexec/artmoon-input-service)" = "root:root" ] \
+    || fail "the pkexec path left the helper not owned by root"
+
+# Another user's directory does not, or one user could plant a payload for another to approve.
+PKEXEC_UID=1001 "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" install --from "$PKEXEC_CASE" >/dev/null 2>&1 \
+    && fail "install accepted a staging directory belonging to a different uid"
+
+# No pkexec at all, and a directory that is not root's: there is no caller to trust, so refuse.
+env -u PKEXEC_UID "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" install --from "$PKEXEC_CASE" >/dev/null 2>&1 \
+    && fail "install accepted a user-owned directory with no pkexec caller"
+
+# A PKEXEC_UID that will not parse must fall back to getuid(), not to uid 0 or to trust.
+PKEXEC_UID=not-a-number "$DEPLOY_FOLDER/usr/libexec/artmoon-input-service" install --from "$PKEXEC_CASE" >/dev/null 2>&1 \
+    && fail "install accepted an unparseable PKEXEC_UID"
+rm -rf "$PKEXEC_CASE"
 
 # Pre-seed the QML modules the app imports but linuxdeploy-plugin-qt's bundle
 # step has historically missed when the host's Qt install lacks them (the 1.0.0

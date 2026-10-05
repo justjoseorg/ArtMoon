@@ -127,12 +127,18 @@ FocusScope {
     /*
      * The USB devices block's one notice line, and its glyph.
      *
-     * Computed here rather than inside the block because three different reasons can stop
-     * that block acting — no USB/IP on this PC, nothing plugged in, and no administrator
-     * rights — and a block that works out its own reason is a block that can disagree with
-     * itself about which one applies. The notice row is the existing grammar for "these
-     * rows cannot act, and here is why", already used by the stream-tweak and host-profile
-     * blocks; this is the same sentence with a third reason.
+     * Computed here rather than inside the block because four different reasons can stop that
+     * block being useful — no USB/IP on this PC, nothing plugged in, no administrator rights,
+     * and nothing able to reach this PC from outside — and a block that works out its own
+     * reason is a block that can disagree with itself about which one applies. The notice row
+     * is the existing grammar for "these rows cannot do what you expect, and here is why",
+     * already used by the stream-tweak and host-profile blocks; this is the same sentence with
+     * a fourth reason.
+     *
+     * The reachability one is the odd member: the rows above it genuinely CAN act, and the
+     * device really is shared. It is here because from the other machine's side that is
+     * indistinguishable from sharing being broken, and it is the reason someone opens this
+     * screen in the first place.
      */
     readonly property string _usbNotice: {
         if (!UsbIpDevices.available)
@@ -141,6 +147,15 @@ FocusScope {
             return qsTr("No USB devices are plugged into this PC.")
         if (!UsbIpDevices.canShare)
             return UsbIpDevices.canShareReason
+        // Before the failed toggle, because it is the wider condition: a toggle that did not
+        // take affects one device, and this affects every device on the list at once.
+        if (UsbIpDevices.reachabilityReason !== "")
+            return UsbIpDevices.reachabilityReason
+        // A toggle was asked for and the machine did not change. Worth saying even though the
+        // rows CAN act — "Not shared yet" alone reads the same whether the bind is still
+        // landing or nothing ever heard the request.
+        if (UsbIpDevices.toggleFailure !== "")
+            return UsbIpDevices.toggleFailure
         return ""
     }
     readonly property string _usbNoticeGlyph: {
@@ -148,6 +163,12 @@ FocusScope {
             return "\uD83D\uDD0C"     // 🔌 this PC cannot do it
         if (UsbIpDevices.devices.length === 0)
             return "\uD83D\uDD0D"     // 🔍 nothing to show
+        if (UsbIpDevices.canShare && UsbIpDevices.reachabilityReason !== "")
+            return "\uD83D\uDCE1"     // 📡 shared here, but nothing can reach it
+        // Only when the rows CAN act: otherwise the reason above is a permission one and the
+        // key is the honest glyph. This changes nothing except the failed-toggle case.
+        if (UsbIpDevices.canShare && UsbIpDevices.toggleFailure !== "")
+            return "\u26A0\uFE0F"     // ⚠️ asked, and it did not take
         return "\uD83D\uDD11"         // 🔑 needs administrator rights
     }
 
@@ -2506,15 +2527,29 @@ FocusScope {
                 // that is the opposite PC, so the bare words invert the whole design.
                 // ArtMoon, ArtLight, exporter, importer. See
                 // docs/usb-ip-input-passthrough.md.
-                Label {
-                    text: qsTr("USB devices on this PC")
-                    font.family: Theme.family
-                    font.pixelSize: settingsScreen._px(Theme.fontSmall)
-                    font.bold: true
-                    font.letterSpacing: 1.4
-                    font.capitalization: Font.AllUppercase
-                    color: settingsScreen._textMut
-                    leftPadding: settingsScreen._px(14)
+                Row {
+                    spacing: settingsScreen._px(10)
+
+                    Label {
+                        text: qsTr("USB devices on this PC")
+                        font.family: Theme.family
+                        font.pixelSize: settingsScreen._px(Theme.fontSmall)
+                        font.bold: true
+                        font.letterSpacing: 1.4
+                        font.capitalization: Font.AllUppercase
+                        color: settingsScreen._textMut
+                        leftPadding: settingsScreen._px(14)
+                    }
+
+                    // Said here because this is where someone would otherwise assume any
+                    // Sunshine-derived client can attach one of these. USB/IP is ours end to
+                    // end: the attach side lives in ArtLight, and nothing else carries it.
+                    Label {
+                        text: qsTr("USB/IP requires ArtLight")
+                        font.family: Theme.family
+                        font.pixelSize: settingsScreen._px(Theme.fontSmall)
+                        color: Theme.text3
+                    }
                 }
 
                 Rectangle {
@@ -2646,17 +2681,23 @@ FocusScope {
                                             font.bold: true
                                             color: settingsScreen._text
                                         }
-                                        // The state is shown, not implied. `wanted` and
-                                        // `shared` are different questions — a device can be
-                                        // asked for and not yet shared — so the line names
-                                        // which of the two the row is currently in.
+                                        // The state is shown, not implied, and it is the state
+                                        // the user asked for: "Shared" means sharing is switched
+                                        // on for this device — which is what it means on Windows,
+                                        // and what the person reading it means by it.
+                                        //
+                                        // It does NOT mean the device is out on the wire. On
+                                        // Linux there is no state for "shareable but still mine":
+                                        // `usbip bind` detaches the device the moment it runs. So
+                                        // the line reads the tick and nothing else, and it cannot
+                                        // flap when the kernel's bind list does. The old wording
+                                        // read the bind list, and on 2026-10-04 it went Shared /
+                                        // Not shared yet / Shared while the person watched.
                                         Label {
                                             text: modelData.vidPid + "  ·  " + modelData.busid
-                                                  + "  ·  " + (modelData.shared
+                                                  + "  ·  " + (modelData.wanted
                                                                ? qsTr("Shared")
-                                                               : (modelData.wanted
-                                                                  ? qsTr("Not shared yet")
-                                                                  : qsTr("Not shared")))
+                                                               : qsTr("Not shared"))
                                             font.family: Theme.family
                                             font.pixelSize: settingsScreen._px(Theme.fontSmall)
                                             color: settingsScreen._textDim
