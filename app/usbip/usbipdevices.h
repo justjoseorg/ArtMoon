@@ -205,6 +205,15 @@ private:
 
     QVariantList m_Devices;
     bool m_Available = false;
+
+    /*
+     * How many consecutive reads a ticked busid has been missing from the device list.
+     *
+     * A count rather than a flag, so a device that is briefly absent — a hub re-enumerating, a
+     * replug — keeps the tick it had. See the prune in the .cpp.
+     */
+    QHash<QString, int> m_MissingFor;
+
     QString m_UnavailableReason;
     bool m_CanShare = false;
     QString m_CanShareReason;
@@ -216,7 +225,7 @@ private:
     QTimer m_SettleTimer;
     int m_SettleTries = 0;
 
-    /* Repeating, and only while something is switched on. See watchForPeer(). */
+    /* Repeating, and never stopped — it is also what re-reads the device list. See refresh(). */
     QTimer m_PeerTimer;
     QElapsedTimer m_PeerSeen;     /* when the helper last named a peer; see kPeerGraceMs */
     QString m_ReachablePeer;      /* as last reported by the helper, empty when unreachable */

@@ -137,6 +137,21 @@ constexpr int kPeerAttempts = 3;
 constexpr int kPeerGraceMs = 15000;
 constexpr int kSettleTries      = 6;
 
+/*
+ * How many consecutive reads a ticked busid has to be missing before the tick is dropped.
+ *
+ * The tick is a standing choice and it outlives the device it names: pull a drive out with the
+ * app open and the busid stays wanted, so ArtMoon goes on believing it is sharing something.
+ * The reachability notices are written for "nothing is switched on", which is therefore never
+ * said — and what the person sees is a device that is not there, still switched on, and no
+ * explanation of either. Measured on the z13, 2026-10-05.
+ *
+ * Not on the first miss, because a device that is momentarily absent is not a device that has
+ * gone: a hub re-enumerating, a replug, a slow read. Three passes keeps the intent across all
+ * of those and is a few seconds in the only state where it matters.
+ */
+constexpr int kMissingTries = 3;
+
 /* Platform tool that enumerates. `usbipd` is not on PATH by default on Windows. */
 QString usbipdProgram()
 {
@@ -642,6 +657,57 @@ void UsbIpDevices::refresh()
         }
     }
 #endif
+
+    /*
+     * ── A tick for a device that is not plugged in ────────────────────────────
+     *
+     * The tick is a standing choice — "offer this one" — and it outlives the device it names.
+     * Pull a drive out with the app open and the busid stays ticked, so ArtMoon goes on
+     * believing it is sharing something: the notices above are written for "nothing is switched
+     * on", which is therefore never said, and the far machine is offered something with no
+     * device behind it. Measured on the z13, 2026-10-05, from an unplugged drive whose busid
+     * stayed in the config for hours.
+     *
+     * Only while the enumeration itself is answering. A tool that failed leaves the list empty,
+     * and an empty list must not be read as "every device is gone" — that would drop a tick the
+     * person still means, on the strength of a read that never happened.
+     */
+    if (m_Available) {
+        QStringList present;
+        for (const auto &entry : m_Devices) {
+            present.append(entry.toMap().value(QStringLiteral("busid")).toString());
+        }
+
+        const QStringList wanted = wantedBusids();
+        QStringList kept;
+        bool pruned = false;
+        for (const QString &busid : wanted) {
+            if (present.contains(busid)) {
+                m_MissingFor.remove(busid);
+                kept.append(busid);
+                continue;
+            }
+            const int missing = m_MissingFor.value(busid) + 1;
+            m_MissingFor.insert(busid, missing);
+            if (missing >= kMissingTries) {
+                pruned = true;
+                continue;      // gone long enough: the tick goes with it
+            }
+            kept.append(busid);
+        }
+
+        // Forget the count for anything no longer wanted, so a tick added later starts clean.
+        const QStringList counted = m_MissingFor.keys();
+        for (const QString &busid : counted) {
+            if (!wanted.contains(busid)) {
+                m_MissingFor.remove(busid);
+            }
+        }
+
+        if (pruned) {
+            storeWantedBusids(kept);
+        }
+    }
 
     watchForPeer();
 
