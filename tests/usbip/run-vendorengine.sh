@@ -29,4 +29,15 @@ g++ -std=c++17 -fPIC -Wall -Wextra \
     $QT_FLAGS \
     -o "$OUT"
 
+# The link line above decides what this test is BUILT against. It does not decide what the loader
+# finds when it RUNS. With a bare aqt/Qt install there is no .pc file, so the flags carry
+# `-L$QTLIB` and the binary links cleanly against that Qt — and then the loader searches the
+# system paths first, picks up a different libQt6Core, and dies with
+# `version 'Qt_6.8' not found (required by ...)`. A link that succeeded a second earlier and a run
+# that cannot start is a confusing pair, so put the Qt we linked against in front for the run.
+if [ -n "$QTLIB" ]; then
+    LD_LIBRARY_PATH="$QTLIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    export LD_LIBRARY_PATH
+fi
+
 exec "$OUT"
