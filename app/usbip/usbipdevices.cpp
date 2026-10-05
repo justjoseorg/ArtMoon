@@ -94,6 +94,19 @@ constexpr int kPeerIntervalMs = 5000;
 constexpr int kPeerWaitIntervalMs = 1000;
 
 /*
+ * How often to re-read the device list when nothing is switched on.
+ *
+ * The list is what this machine could offer, and it only comes into being when the enumerating
+ * tool is run — so a device plugged in or pulled out is invisible until this function runs again.
+ * This timer is the only thing that runs it, and it used to stop the moment nothing was ticked:
+ * the list then stayed exactly as it was until the app was restarted, which is what someone sees
+ * who plugs a drive in and waits for the row to appear, or pulls one out and finds it still there.
+ *
+ * Five seconds, because in this state the only thing left to notice is the list itself.
+ */
+constexpr int kIdleListIntervalMs = 5000;
+
+/*
  * How many times to try opening for one machine before leaving it alone.
  *
  * The call goes through pkexec, and polkit grants this one only to the local ACTIVE session —
@@ -202,7 +215,8 @@ UsbIpDevices::UsbIpDevices(QObject *parent)
     : QObject(parent)
 {
     // Repeating, unlike the settle timer. This one watches for something another machine does,
-    // and it stops the moment nothing is switched on. See watchForPeer().
+    // and it is also the only thing that re-reads the device list — so it never stops, it only
+    // slows to kIdleListIntervalMs. See refresh().
     m_PeerTimer.setInterval(kPeerIntervalMs);
     connect(&m_PeerTimer, &QTimer::timeout, this, &UsbIpDevices::refresh);
 
@@ -631,10 +645,18 @@ void UsbIpDevices::refresh()
 
     watchForPeer();
 
-    // Keep looking while anything is switched on, and stop the moment nothing is. The state
-    // this is watching for is created by the other machine, not by us, so the only way to
-    // know about it is to ask — and asking forever when nothing is shared would be a
-    // background cost for no answer.
+    // Keep looking, always. Three speeds, because the interval is felt in a different state each
+    // time.
+    //
+    // This timer is doing two jobs, and the second one is easy to lose: besides watching for a
+    // machine streaming here, it is the only thing that re-runs this function — and re-running
+    // this function is what reads the device list. So stopping it when nothing was switched on
+    // did not merely stop the peer watch, it froze the list: a device plugged in or pulled out
+    // stayed invisible until the app was restarted. Measured on the z13, 2026-10-05.
+    //
+    // Nothing wanted is therefore the slowest speed rather than a stop. There is no peer to catch
+    // in that state, so the only thing left to notice is a change in what is plugged in.
+    int interval = kIdleListIntervalMs;
     if (m_CanShare && !wantedBusids().isEmpty()) {
         /*
          * Two speeds, because the interval is felt in exactly one of the two states.
@@ -656,16 +678,14 @@ void UsbIpDevices::refresh()
                 break;
             }
         }
-        const int interval = anyShared ? kPeerIntervalMs : kPeerWaitIntervalMs;
-        if (m_PeerTimer.interval() != interval) {
-            m_PeerTimer.setInterval(interval);
-        }
-        if (!m_PeerTimer.isActive()) {
-            m_PeerTimer.start(interval);
-        }
+        interval = anyShared ? kPeerIntervalMs : kPeerWaitIntervalMs;
     }
-    else {
-        m_PeerTimer.stop();
+
+    if (m_PeerTimer.interval() != interval) {
+        m_PeerTimer.setInterval(interval);
+    }
+    if (!m_PeerTimer.isActive()) {
+        m_PeerTimer.start(interval);
     }
 
     rebuild();
