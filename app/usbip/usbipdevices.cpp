@@ -707,6 +707,55 @@ void UsbIpDevices::refresh()
         if (pruned) {
             storeWantedBusids(kept);
         }
+
+        /*
+         * ── A device that comes back should come back switched on ─────────────────
+         *
+         * The prune above is right to drop the tick of a device that has gone: nothing may be
+         * offered while nothing is there. But the tick was the person's standing choice about a
+         * DEVICE, and losing it on an unplug means plugging the same drive back in presents it
+         * switched off, as though they had never asked. Measured on the z13, 2026-10-05.
+         *
+         * So the choice is also kept keyed on the device itself, and re-applied here — but only
+         * ever against a device the enumeration can see RIGHT NOW. That ordering is the whole
+         * safety argument: this pass runs strictly downstream of the prune, so an absent device
+         * has already had its tick removed and can never be re-offered by this door. The phantom
+         * the prune exists to kill cannot come back through it.
+         *
+         * Nothing is bound here either. A tick is intent; the bind still happens at the stream,
+         * in watchForPeer() below, exactly as it does for a tick the user made by hand.
+         */
+        QStringList remembered = rememberedDevices();
+        bool rememberedChanged = false;
+        QStringList wantedNow = wantedBusids();
+        bool wantedChanged = false;
+
+        for (const auto &entry : m_Devices) {
+            const QString busid = entry.toMap().value(QStringLiteral("busid")).toString();
+            const QString identity = identityForBusid(busid);
+            if (identity.isEmpty()) {
+                continue;      // nothing stable to key on: leave this device exactly as it was
+            }
+
+            if (wantedNow.contains(busid)) {
+                // A tick can predate this build, so the list is seeded from what is ticked.
+                if (!remembered.contains(identity)) {
+                    remembered.append(identity);
+                    rememberedChanged = true;
+                }
+            }
+            else if (remembered.contains(identity)) {
+                wantedNow.append(busid);
+                wantedChanged = true;
+            }
+        }
+
+        if (rememberedChanged) {
+            storeRememberedDevices(remembered);
+        }
+        if (wantedChanged) {
+            storeWantedBusids(wantedNow);
+        }
     }
 
     watchForPeer();
@@ -906,10 +955,93 @@ void UsbIpDevices::storeWantedBusids(const QStringList &busids)
     prefs->save();
 }
 
+QStringList UsbIpDevices::rememberedDevices() const
+{
+    return StreamingPreferences::get()->usbIpRememberedDevices;
+}
+
+void UsbIpDevices::storeRememberedDevices(const QStringList &identities)
+{
+    auto *prefs = StreamingPreferences::get();
+    if (prefs->usbIpRememberedDevices == identities) {
+        return;
+    }
+    prefs->usbIpRememberedDevices = identities;
+    prefs->save();
+}
+
+/*
+ * What makes a device the SAME device across an unplug.
+ *
+ * A busid cannot: it is the path the device hangs off, so it names where it was plugged in
+ * rather than what it is. That is exactly why a tick stored as a busid is lost on a replug, and
+ * why storing one as a busid while the device is away is the phantom-device bug this class
+ * already prunes.
+ *
+ * A serial is the device's own answer and follows it to another port. Not every bridge reports
+ * one, so vid:pid is the fallback — enough to tell a drive from a mouse, not enough to tell two
+ * identical enclosures apart, and honest about which of those it is by the prefix below.
+ */
+QString UsbIpDevices::identityForBusid(const QString &busid) const
+{
+    for (const auto &entry : m_Devices) {
+        const QVariantMap row = entry.toMap();
+        if (row.value(QStringLiteral("busid")).toString() != busid) {
+            continue;
+        }
+
+#ifdef Q_OS_LINUX
+        // The kernel's own field for the same device the enumeration just named. Read-only, and
+        // a busid is the sysfs directory's name. Unreadable or empty is normal on devices that
+        // do not report one, and falls through to vid:pid rather than failing.
+        QFile serialFile(QStringLiteral("/sys/bus/usb/devices/%1/serial").arg(busid));
+        if (serialFile.open(QIODevice::ReadOnly)) {
+            const QString serial = QString::fromLocal8Bit(serialFile.readAll()).trimmed();
+            if (!serial.isEmpty()) {
+                return QStringLiteral("serial:") + serial;
+            }
+        }
+#endif
+
+        const QString vidPid = row.value(QStringLiteral("vidPid")).toString();
+        return vidPid.isEmpty() ? QString() : QStringLiteral("vidpid:") + vidPid;
+    }
+
+    return QString();
+}
+
 void UsbIpDevices::setWanted(const QString &busid, bool wanted)
 {
     if (busid.isEmpty()) {
         return;
+    }
+
+    /*
+     * Record the choice against the DEVICE as well as against the slot it is sitting in, so it
+     * survives the device being unplugged and is re-offered switched on when it comes back.
+     *
+     * Un-ticking forgets it for exactly the same reason, and this half is load-bearing: the
+     * replug pass in refresh() re-applies anything remembered, so a device left in that list
+     * after being switched off would switch ITSELF back on at the next poll. The person's last
+     * word wins in both directions.
+     *
+     * identityForBusid() answers from the current enumeration, not from the wanted list, so this
+     * is read before the list below is rewritten. It is empty for a busid that is not in the
+     * list — which cannot happen here, since a toggle only exists on a row that is — and an
+     * empty identity changes nothing.
+     */
+    const QString identity = identityForBusid(busid);
+    if (!identity.isEmpty()) {
+        QStringList remembered = rememberedDevices();
+        if (wanted) {
+            if (!remembered.contains(identity)) {
+                remembered.append(identity);
+                storeRememberedDevices(remembered);
+            }
+        }
+        else if (remembered.removeAll(identity) > 0) {
+            storeRememberedDevices(remembered);
+        }
     }
 
     QStringList busids = wantedBusids();

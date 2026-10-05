@@ -152,6 +152,20 @@ private:
     void rebuild();
     QStringList wantedBusids() const;
     void storeWantedBusids(const QStringList &busids);
+
+    /*
+     * The same intent as wantedBusids(), but keyed on the device itself instead of the slot it
+     * is plugged into, so it survives the device being unplugged. See the replug pass in the .cpp.
+     */
+    QStringList rememberedDevices() const;
+    void storeRememberedDevices(const QStringList &identities);
+
+    /*
+     * The stable identity of the device at this busid, as the current enumeration sees it: its
+     * serial when it has one, else its vid:pid, each prefixed so the two can never collide.
+     * Empty when the busid is not in the list — which is the caller's cue to change nothing.
+     */
+    QString identityForBusid(const QString &busid) const;
     static QString bundledHelperPath();
     static QString bundledPolicyPath();
     static QString bundledUsbipPath();

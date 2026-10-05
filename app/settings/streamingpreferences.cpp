@@ -65,6 +65,7 @@
 // Busids this machine's owner has asked to offer to an importer. Intent, not state — the
 // privileged input service is what turns it into a bind. See streamingpreferences.h.
 #define SER_USBIPWANTED "usbipwanted"
+#define SER_USBIPREMEMBERED "usbipremembered"
 #define SER_SWAPMOUSEBUTTONS "swapmousebuttons"
 #define SER_MUTEONFOCUSLOSS "muteonfocusloss"
 #define SER_BACKGROUNDGAMEPAD "backgroundgamepad"
@@ -300,6 +301,7 @@ void StreamingPreferences::reload()
     waitForGameOnScreen = settings.value(SER_WAITFORGAME, false).toBool();
     clipboardSync = settings.value(SER_CLIPBOARDSYNC, false).toBool();
     usbIpWantedBusids = settings.value(SER_USBIPWANTED, QStringList()).toStringList();
+    usbIpRememberedDevices = settings.value(SER_USBIPREMEMBERED, QStringList()).toStringList();
     // ── Performance overlay ──────────────────────────────────────────────────
     // On/off migrates through two older shapes: the 4-state profile of 4.x/5.0.0
     // (anything but Off meant on) and, before that, a plain boolean. Neither is
@@ -442,6 +444,7 @@ void StreamingPreferences::save()
     settings.remove(SER_OVERLAYMODE);
     settings.setValue(SER_AUDIOCFG, static_cast<int>(audioConfig));
     settings.setValue(SER_USBIPWANTED, usbIpWantedBusids);
+    settings.setValue(SER_USBIPREMEMBERED, usbIpRememberedDevices);
     settings.setValue(SER_HDR, enableHdr);
     settings.setValue(SER_YUV444, enableYUV444);
     settings.setValue(SER_VIDEOCFG, static_cast<int>(videoCodecConfig));
