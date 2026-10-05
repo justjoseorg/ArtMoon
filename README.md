@@ -40,10 +40,9 @@ A gamepad-first streaming client built to work best with [ArtLight](https://gith
 
 - **ArtLight Server** — streaming host, with a pre-signed virtual display driver and a clean web UI
 - **ArtLight Control** — companion app with a live dashboard: RTT, bitrate, frame drops, host stats ticking every second, plus per-session quality reports
+- **USB device sharing** — switch on a keyboard, a mouse or a USB drive in ArtMoon and it is handed to the host, where it behaves as though it were plugged in. The receiving half is ArtLight Server, so this is the feature that needs ArtLight rather than merely preferring it. Local network or VPN for now, with authentication still to come
 
 ArtMoon works with any Moonlight-compatible host, but **it works best with ArtLight** — that's where the paired features come alive.
-
-**A few things need ArtLight outright.** USB device sharing is one of them: switch on a keyboard, a mouse or a USB drive here and it is handed to the host, where it behaves as though it were plugged in. The half that receives it lives in **ArtLight Server**, so this is the one feature that will not work against another host. It stays on your local network or a VPN for now, with authentication still to come.
 
 ## 🔥 Features
 
