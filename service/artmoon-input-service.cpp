@@ -384,7 +384,10 @@ std::string usbipProgram()
 std::vector<std::string> bindCommand(const std::string &busid)
 {
 #ifdef _WIN32
-    return { "usbipd", "bind", "--busid", busid };
+    // --force: Windows refuses to bind a device it considers in use, and a peripheral with
+    // another filter driver on its stack always counts as in use (a Razer mouse or keyboard
+    // carries RzDev_<pid> as an upper filter). The tick already said take it.
+    return { "usbipd", "bind", "--force", "--busid", busid };
 #else
     return { usbipProgram(), "bind", "-b", busid };
 #endif

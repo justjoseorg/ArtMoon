@@ -260,7 +260,12 @@ std::string processRequest(const std::string &request)
     for (const auto &busid : toBind) {
         std::string output;
         DWORD code = 0;
-        const bool ran = runUsbipd(L"bind --busid " + widen(busid), &output, &code);
+        // --force, because a device Windows considers "in use" refuses a plain bind — and
+        // every peripheral with another filter driver on its stack counts as in use. A
+        // Razer mouse or keyboard carries RzDev_<pid> as an upper filter, so a plain bind
+        // fails silently on exactly the devices this feature exists to share. The user
+        // ticked this device, so take it.
+        const bool ran = runUsbipd(L"bind --force --busid " + widen(busid), &output, &code);
         if (!ran) {
             if (firstError.empty()) firstError = "could not run usbipd";
             continue;
