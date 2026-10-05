@@ -5,7 +5,7 @@ ArtMoon - ChangeLog - Developed by onaiaku & Rias
 https://github.com/onaiaku/ArtMoon
 
 --------------------------------------
-**Version 1.8.0 (03/10/2026)**
+**Version 1.8.0 (05/10/2026)**
 --------------------------------------
 
 Your own keyboard and mouse, inside the stream.
@@ -15,6 +15,12 @@ Your own keyboard and mouse, inside the stream.
 **Settings**
 - **Input:** a new USB devices section lists the USB hardware plugged into this PC — name, vendor and bus id — and says of each one whether it is currently offered to another machine over the network. This is the groundwork for sending your real keyboard and mouse into a stream, which is what gets input into a game that ignores ordinary streamed input: nothing is injected, because the game is talking to the physical device. You will find it under Settings, Input.
 - **Input:** every device in that list has an Off/On switch for sharing it. Turning one on hands that device to the machine you are streaming from, and it is gone from this one until the stream ends. Sharing needs the input service — a small privileged piece that arrives with this build: the Windows setup installs it, and on Linux ArtMoon places it itself the first time you need it, with a single password prompt. Until it is in place the switches are shown greyed with the reason written beside them, so nothing here can look as though it worked when it did not. Nothing is shared until you turn something on; the list on its own changes nothing about your devices.
+
+**Good to know — 2**
+
+**Input**
+- **Input:** device sharing works over a **local network or a VPN, and nowhere else in this release**. Reaching it across the open internet is not supported yet — that is the next piece of work, not an oversight. Keep the two machines on the same network, or on a tunnel, and the app opens the port only for the machine it is serving and only while a stream is running.
+- **Input:** device sharing is **not behind any authentication at this time**. There is no password, no pairing step and no account — a device you switch on is offered to whatever can reach the port. That is the reason for the limit above, and the reason it should not be exposed to the internet. Authentication is planned; until it is here, treat this port the way you would treat any other unprotected service on your network.
 
 **Under the hood**
 - The device list is read from the sharing tool's own output on each platform, with the parsers pinned against captures taken from real machines so that a change in either format cannot pass unnoticed.
