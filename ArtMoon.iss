@@ -207,6 +207,9 @@ procedure InstallInputService;
 var
   ResultCode: Integer;
   ServiceExe: String;
+  ServiceKey: String;
+  Attempt: Integer;
+  Created: Boolean;
 begin
   ServiceExe := ExpandConstant('{app}\artmoon-input-service.exe');
   if not FileExists(ServiceExe) then
@@ -217,11 +220,48 @@ begin
   Exec(ExpandConstant('{sys}\sc.exe'), 'delete ArtMoonInputService', '',
        SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
-  if Exec(ExpandConstant('{sys}\sc.exe'),
-          'create ArtMoonInputService binPath= "' + ServiceExe + '" start= auto',
-          '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+  // Removing a service is asynchronous, so `sc create` immediately afterwards can fail with
+  // "marked for deletion". Retry rather than let the helper end up not installed at all.
+  ResultCode := 1;
+  Created := False;
+  Attempt := 0;
+  while (not Created) and (Attempt < 10) do
+  begin
+    Created := Exec(ExpandConstant('{sys}\sc.exe'),
+                    'create ArtMoonInputService binPath= "' + ServiceExe + '" start= auto',
+                    '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+    if not Created then
+      Sleep(500);
+    Attempt := Attempt + 1;
+  end;
+
+  if Created then
+  begin
+    // sc.exe cannot store a quoted path. Measured on a real machine: `sc create` and `sc config`
+    // both strip the quotes, and passing them escaped makes sc print its usage and refuse. So the
+    // path is corrected underneath sc, where the string is written verbatim and SCM reads it back
+    // correctly. An unquoted path containing spaces is the well-known opening where a local user
+    // drops C:\Program.exe and gets SYSTEM.
+    ServiceKey := 'SYSTEM\CurrentControlSet\Services\ArtMoonInputService';
+    RegWriteStringValue(HKLM, ServiceKey, 'ImagePath', '"' + ServiceExe + '"');
+
+    // Ordering. Without this the helper may start about five seconds into boot, while usbipd does
+    // not come up for minutes - and it then never appears. Only added when usbipd is really there:
+    // a dependency on a service that is not installed stops ours from starting at all, which is a
+    // worse failure than the one it fixes.
+    if RegKeyExists(HKLM, 'SYSTEM\CurrentControlSet\Services\usbipd') then
+      Exec(ExpandConstant('{sys}\sc.exe'), 'config ArtMoonInputService depend= usbipd', '',
+           SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+    // And if it does start and then dies, let SCM bring it back instead of leaving it dead until
+    // somebody notices the Settings page says the helper is not running.
+    Exec(ExpandConstant('{sys}\sc.exe'),
+         'failure ArtMoonInputService reset= 86400 actions= restart/30000/restart/30000/restart/30000',
+         '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
     Exec(ExpandConstant('{sys}\sc.exe'), 'start ArtMoonInputService', '',
          SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
