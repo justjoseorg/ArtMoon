@@ -223,6 +223,7 @@ jobs:
           # Qt is the dependency, which is why this sits here rather than with the guard checks
           # above — those run before Qt exists.
           cd tests/usbip
+          ./run.sh
           ./run-vendorengine.sh
 
       - name: Build Qt Virtual Keyboard
