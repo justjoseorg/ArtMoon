@@ -258,22 +258,57 @@ std::string processRequest(const std::string &request)
     size_t changed = 0;
 
     for (const auto &busid : toBind) {
+        /*
+         * ── Plain bind first, and --force only if the machine refuses ──────────────
+         *
+         * --force used to be unconditional here, on the argument that a Razer peripheral
+         * carries RzDev_<pid> as an upper filter and therefore always counts as "in use".
+         * The vendor-engine work superseded that argument: the engine is stopped before a
+         * take (see vendorengine.h), so the reason to force has gone — and forcing carries
+         * a cost of its own, because `--force` also overrides "in use" for a device whose
+         * FILESYSTEM is mounted. On a drive that is the whole difference between a bind
+         * that is refused and a drive yanked out from under whatever was writing to it.
+         * Measured on niks-minipc, 2026-10-06: an NVMe force-bound this way vanished from
+         * Windows and did not come back through a reboot.
+         *
+         * So a machine that is behaving gets a plain bind, and --force stays as the
+         * fallback for the devices that genuinely refuse. Every fallback is logged, so the
+         * day the log shows it never fires is the day this can be deleted outright rather
+         * than argued about.
+         */
         std::string output;
         DWORD code = 0;
-        // --force, because a device Windows considers "in use" refuses a plain bind — and
-        // every peripheral with another filter driver on its stack counts as in use. A
-        // Razer mouse or keyboard carries RzDev_<pid> as an upper filter, so a plain bind
-        // fails silently on exactly the devices this feature exists to share. The user
-        // ticked this device, so take it.
-        const bool ran = runUsbipd(L"bind --force --busid " + widen(busid), &output, &code);
+        const bool ran = runUsbipd(L"bind --busid " + widen(busid), &output, &code);
+
         if (!ran) {
             if (firstError.empty()) firstError = "could not run usbipd";
             continue;
         }
+
         if (code != 0) {
-            if (firstError.empty()) firstError = firstLine(output);
-            continue;
+            // Refused. This refusal is the only thing --force exists for.
+            const std::string refusal = firstLine(output);
+
+            std::string forced;
+            DWORD forcedCode = 0;
+            if (!runUsbipd(L"bind --force --busid " + widen(busid), &forced, &forcedCode)) {
+                if (firstError.empty()) firstError = "could not run usbipd";
+                continue;
+            }
+            if (forcedCode != 0) {
+                // Forcing did not rescue it either, so the plain refusal is the honest
+                // answer — and it is the one that names the real reason.
+                if (firstError.empty()) {
+                    firstError = refusal.empty() ? firstLine(forced) : refusal;
+                }
+                continue;
+            }
+
+            logEvent(EVENTLOG_INFORMATION_TYPE,
+                     widen("plain bind refused for " + busid + " (" + refusal +
+                           "); --force was needed").c_str());
         }
+
         ++changed;
     }
 

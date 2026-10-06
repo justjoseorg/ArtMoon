@@ -384,10 +384,16 @@ std::string usbipProgram()
 std::vector<std::string> bindCommand(const std::string &busid)
 {
 #ifdef _WIN32
-    // --force: Windows refuses to bind a device it considers in use, and a peripheral with
-    // another filter driver on its stack always counts as in use (a Razer mouse or keyboard
-    // carries RzDev_<pid> as an upper filter). The tick already said take it.
-    return { "usbipd", "bind", "--force", "--busid", busid };
+    // A plain bind, and deliberately no --force on this path either.
+    //
+    // --force is not the default here any more. It overrides "Windows considers this device
+    // in use", which on a drive with a mounted filesystem is the difference between a bind
+    // that is refused and a drive yanked out from under whatever was writing to it. The
+    // helper that actually ships on Windows is artmoon-input-service-win.cpp, which tries a
+    // plain bind and reaches for --force only when the machine refuses; this branch is kept
+    // in step so that compiling this file for Windows cannot quietly reintroduce the
+    // unconditional force. See the comment on the bind loop there.
+    return { "usbipd", "bind", "--busid", busid };
 #else
     return { usbipProgram(), "bind", "-b", busid };
 #endif
