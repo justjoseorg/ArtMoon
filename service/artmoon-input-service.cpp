@@ -528,6 +528,26 @@ bool ensureDaemon()
     // we install a unit of our own.
     if (systemdUnitExists(kDistroUsbipdUnit)) {
         unit = "usbipd";
+
+        // A machine can grow a distro unit *after* we have been here.
+        //
+        // Installing the usbip package is the first line of every USB/IP guide, so this is an
+        // ordinary thing for a user to do a day after they first shared a device. The distro's
+        // unit then appears beside the one we wrote back when there was nothing to lean on, and
+        // both daemons want port 3240. Only one can have it: ours restarts five times inside a
+        // second, hits the start limit, and sits failed for good — so the user is shown a broken
+        // ArtMoon service next to a listener that is working perfectly.
+        //
+        // Measured on the exporter 2026-10-06: artmoon-usbipd failed with start-limit-hit,
+        // `bind: 0.0.0.0:3240: 98 (Address already in use)`, while usbipd.service held the port.
+        //
+        // So our unit goes when the distro's arrives. It cannot ever bind again, and leaving it
+        // enabled means a failed unit and five pointless restarts at every single boot.
+        if (systemdUnitExists(kUsbipdUnitName)) {
+            runProcess({ "systemctl", "disable", "--now", kUsbipdUnitName });
+            remove(kUsbipdUnitPath);
+            runProcess({ "systemctl", "daemon-reload" });
+        }
     } else {
         if (access(kUsbipdBundledPath, X_OK) != 0) {
             return false;               // nothing staged to run
