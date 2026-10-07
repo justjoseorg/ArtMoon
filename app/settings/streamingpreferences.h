@@ -320,6 +320,14 @@ public:
      * choices are already recorded the first time the service runs.
      */
     Q_PROPERTY(QStringList usbIpWantedBusids MEMBER usbIpWantedBusids NOTIFY usbIpWantedBusidsChanged)
+
+    /*
+     * The same choice as usbIpWantedBusids, but keyed on the DEVICE rather than on the busid it
+     * happened to be plugged into — so a drive that is pulled out and put back is offered
+     * switched on again, which is what the person meant when they ticked it. Nothing is offered,
+     * exported or believed while the device is absent; see the replug pass in usbipdevices.cpp.
+     */
+    Q_PROPERTY(QStringList usbIpRememberedDevices MEMBER usbIpRememberedDevices NOTIFY usbIpRememberedDevicesChanged)
     // Directly accessible members for preferences
     int width;
     int height;
@@ -402,6 +410,9 @@ public:
     // Busids the user has asked to share. See the Q_PROPERTY note above.
     QStringList usbIpWantedBusids;
 
+    // Devices the user has asked to share, by identity (serial, else vid:pid). See above.
+    QStringList usbIpRememberedDevices;
+
 signals:
     void displayModeChanged();
     void customResolutionChanged();
@@ -455,6 +466,7 @@ signals:
     void clockFormatChanged();
     void dateFormatChanged();
     void usbIpWantedBusidsChanged();
+    void usbIpRememberedDevicesChanged();
 private:
     explicit StreamingPreferences(QQmlEngine *qmlEngine);
 

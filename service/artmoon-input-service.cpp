@@ -384,6 +384,15 @@ std::string usbipProgram()
 std::vector<std::string> bindCommand(const std::string &busid)
 {
 #ifdef _WIN32
+    // A plain bind, and deliberately no --force on this path either.
+    //
+    // --force is not the default here any more. It overrides "Windows considers this device
+    // in use", which on a drive with a mounted filesystem is the difference between a bind
+    // that is refused and a drive yanked out from under whatever was writing to it. The
+    // helper that actually ships on Windows is artmoon-input-service-win.cpp, which tries a
+    // plain bind and reaches for --force only when the machine refuses; this branch is kept
+    // in step so that compiling this file for Windows cannot quietly reintroduce the
+    // unconditional force. See the comment on the bind loop there.
     return { "usbipd", "bind", "--busid", busid };
 #else
     return { usbipProgram(), "bind", "-b", busid };
@@ -525,6 +534,26 @@ bool ensureDaemon()
     // we install a unit of our own.
     if (systemdUnitExists(kDistroUsbipdUnit)) {
         unit = "usbipd";
+
+        // A machine can grow a distro unit *after* we have been here.
+        //
+        // Installing the usbip package is the first line of every USB/IP guide, so this is an
+        // ordinary thing for a user to do a day after they first shared a device. The distro's
+        // unit then appears beside the one we wrote back when there was nothing to lean on, and
+        // both daemons want port 3240. Only one can have it: ours restarts five times inside a
+        // second, hits the start limit, and sits failed for good — so the user is shown a broken
+        // ArtMoon service next to a listener that is working perfectly.
+        //
+        // Measured on the exporter 2026-10-06: artmoon-usbipd failed with start-limit-hit,
+        // `bind: 0.0.0.0:3240: 98 (Address already in use)`, while usbipd.service held the port.
+        //
+        // So our unit goes when the distro's arrives. It cannot ever bind again, and leaving it
+        // enabled means a failed unit and five pointless restarts at every single boot.
+        if (systemdUnitExists(kUsbipdUnitName)) {
+            runProcess({ "systemctl", "disable", "--now", kUsbipdUnitName });
+            remove(kUsbipdUnitPath);
+            runProcess({ "systemctl", "daemon-reload" });
+        }
     } else {
         if (access(kUsbipdBundledPath, X_OK) != 0) {
             return false;               // nothing staged to run

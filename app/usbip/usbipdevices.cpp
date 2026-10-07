@@ -1,5 +1,6 @@
 #include "usbipdevices.h"
 #include "usbipdevicelist.h"
+#include "vendorengine.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -94,6 +95,19 @@ constexpr int kPeerIntervalMs = 5000;
 constexpr int kPeerWaitIntervalMs = 1000;
 
 /*
+ * How often to re-read the device list when nothing is switched on.
+ *
+ * The list is what this machine could offer, and it only comes into being when the enumerating
+ * tool is run — so a device plugged in or pulled out is invisible until this function runs again.
+ * This timer is the only thing that runs it, and it used to stop the moment nothing was ticked:
+ * the list then stayed exactly as it was until the app was restarted, which is what someone sees
+ * who plugs a drive in and waits for the row to appear, or pulls one out and finds it still there.
+ *
+ * Five seconds, because in this state the only thing left to notice is the list itself.
+ */
+constexpr int kIdleListIntervalMs = 5000;
+
+/*
  * How many times to try opening for one machine before leaving it alone.
  *
  * The call goes through pkexec, and polkit grants this one only to the local ACTIVE session —
@@ -123,6 +137,21 @@ constexpr int kPeerAttempts = 3;
  */
 constexpr int kPeerGraceMs = 15000;
 constexpr int kSettleTries      = 6;
+
+/*
+ * How many consecutive reads a ticked busid has to be missing before the tick is dropped.
+ *
+ * The tick is a standing choice and it outlives the device it names: pull a drive out with the
+ * app open and the busid stays wanted, so ArtMoon goes on believing it is sharing something.
+ * The reachability notices are written for "nothing is switched on", which is therefore never
+ * said — and what the person sees is a device that is not there, still switched on, and no
+ * explanation of either. Measured on the z13, 2026-10-05.
+ *
+ * Not on the first miss, because a device that is momentarily absent is not a device that has
+ * gone: a hub re-enumerating, a replug, a slow read. Three passes keeps the intent across all
+ * of those and is a few seconds in the only state where it matters.
+ */
+constexpr int kMissingTries = 3;
 
 /* Platform tool that enumerates. `usbipd` is not on PATH by default on Windows. */
 QString usbipdProgram()
@@ -202,16 +231,49 @@ UsbIpDevices::UsbIpDevices(QObject *parent)
     : QObject(parent)
 {
     // Repeating, unlike the settle timer. This one watches for something another machine does,
-    // and it stops the moment nothing is switched on. See watchForPeer().
+    // and it is also the only thing that re-reads the device list — so it never stops, it only
+    // slows to kIdleListIntervalMs. See refresh().
     m_PeerTimer.setInterval(kPeerIntervalMs);
     connect(&m_PeerTimer, &QTimer::timeout, this, &UsbIpDevices::refresh);
 
     m_SettleTimer.setSingleShot(true);
     connect(&m_SettleTimer, &QTimer::timeout, this, &UsbIpDevices::settle);
+
+    /*
+     * The linger — TEN MINUTES (Nik's call, 2026-10-05).
+     *
+     * The engine is not put back the moment a device comes home, because that thrashes: step out
+     * of a stream to check something, step back in two minutes later, and the engine has been
+     * stopped and restarted in between — over and over, if the person keeps dipping in and out.
+     * Its process tree takes around thirty seconds to come up, so a quick re-take kills a
+     * HALF-STARTED engine, and what repeatedly interrupting its startup does is not known. A
+     * timer removes the question: come back inside the window and the engine never returned at
+     * all, so nothing happened.
+     */
+    m_VendorLingerTimer.setSingleShot(true);
+    m_VendorLingerTimer.setInterval(10 * 60 * 1000);
+    connect(&m_VendorLingerTimer, &QTimer::timeout, this, &UsbIpDevices::restoreVendorEngine);
+
+    /*
+     * And the crash case, first thing. If a previous run stopped an engine and then died before
+     * putting it back, this is the only thing left that will ever do so — nothing on the machine
+     * restarts it, which was measured rather than assumed.
+     */
+    honourRecordedVendorPause();
+
     refresh();
 }
 
-UsbIpDevices::~UsbIpDevices() = default;
+UsbIpDevices::~UsbIpDevices()
+{
+    /*
+     * Closing ArtMoon must not strand the user's vendor software.
+     *
+     * The linger is deliberately not honoured here: at quit there is no "they might come back in
+     * a minute", and a paused engine is a visible absence the user never asked for.
+     */
+    restoreVendorEngine();
+}
 
 UsbIpDevices *UsbIpDevices::get(QQmlEngine *qmlEngine)
 {
@@ -629,12 +691,120 @@ void UsbIpDevices::refresh()
     }
 #endif
 
+    /*
+     * ── A tick for a device that is not plugged in ────────────────────────────
+     *
+     * The tick is a standing choice — "offer this one" — and it outlives the device it names.
+     * Pull a drive out with the app open and the busid stays ticked, so ArtMoon goes on
+     * believing it is sharing something: the notices above are written for "nothing is switched
+     * on", which is therefore never said, and the far machine is offered something with no
+     * device behind it. Measured on the z13, 2026-10-05, from an unplugged drive whose busid
+     * stayed in the config for hours.
+     *
+     * Only while the enumeration itself is answering. A tool that failed leaves the list empty,
+     * and an empty list must not be read as "every device is gone" — that would drop a tick the
+     * person still means, on the strength of a read that never happened.
+     */
+    if (m_Available) {
+        QStringList present;
+        for (const auto &entry : m_Devices) {
+            present.append(entry.toMap().value(QStringLiteral("busid")).toString());
+        }
+
+        const QStringList wanted = wantedBusids();
+        QStringList kept;
+        bool pruned = false;
+        for (const QString &busid : wanted) {
+            if (present.contains(busid)) {
+                m_MissingFor.remove(busid);
+                kept.append(busid);
+                continue;
+            }
+            const int missing = m_MissingFor.value(busid) + 1;
+            m_MissingFor.insert(busid, missing);
+            if (missing >= kMissingTries) {
+                pruned = true;
+                continue;      // gone long enough: the tick goes with it
+            }
+            kept.append(busid);
+        }
+
+        // Forget the count for anything no longer wanted, so a tick added later starts clean.
+        const QStringList counted = m_MissingFor.keys();
+        for (const QString &busid : counted) {
+            if (!wanted.contains(busid)) {
+                m_MissingFor.remove(busid);
+            }
+        }
+
+        if (pruned) {
+            storeWantedBusids(kept);
+        }
+
+        /*
+         * ── A device that comes back should come back switched on ─────────────────
+         *
+         * The prune above is right to drop the tick of a device that has gone: nothing may be
+         * offered while nothing is there. But the tick was the person's standing choice about a
+         * DEVICE, and losing it on an unplug means plugging the same drive back in presents it
+         * switched off, as though they had never asked. Measured on the z13, 2026-10-05.
+         *
+         * So the choice is also kept keyed on the device itself, and re-applied here — but only
+         * ever against a device the enumeration can see RIGHT NOW. That ordering is the whole
+         * safety argument: this pass runs strictly downstream of the prune, so an absent device
+         * has already had its tick removed and can never be re-offered by this door. The phantom
+         * the prune exists to kill cannot come back through it.
+         *
+         * Nothing is bound here either. A tick is intent; the bind still happens at the stream,
+         * in watchForPeer() below, exactly as it does for a tick the user made by hand.
+         */
+        QStringList remembered = rememberedDevices();
+        bool rememberedChanged = false;
+        QStringList wantedNow = wantedBusids();
+        bool wantedChanged = false;
+
+        for (const auto &entry : m_Devices) {
+            const QString busid = entry.toMap().value(QStringLiteral("busid")).toString();
+            const QString identity = identityForBusid(busid);
+            if (identity.isEmpty()) {
+                continue;      // nothing stable to key on: leave this device exactly as it was
+            }
+
+            if (wantedNow.contains(busid)) {
+                // A tick can predate this build, so the list is seeded from what is ticked.
+                if (!remembered.contains(identity)) {
+                    remembered.append(identity);
+                    rememberedChanged = true;
+                }
+            }
+            else if (remembered.contains(identity)) {
+                wantedNow.append(busid);
+                wantedChanged = true;
+            }
+        }
+
+        if (rememberedChanged) {
+            storeRememberedDevices(remembered);
+        }
+        if (wantedChanged) {
+            storeWantedBusids(wantedNow);
+        }
+    }
+
     watchForPeer();
 
-    // Keep looking while anything is switched on, and stop the moment nothing is. The state
-    // this is watching for is created by the other machine, not by us, so the only way to
-    // know about it is to ask — and asking forever when nothing is shared would be a
-    // background cost for no answer.
+    // Keep looking, always. Three speeds, because the interval is felt in a different state each
+    // time.
+    //
+    // This timer is doing two jobs, and the second one is easy to lose: besides watching for a
+    // machine streaming here, it is the only thing that re-runs this function — and re-running
+    // this function is what reads the device list. So stopping it when nothing was switched on
+    // did not merely stop the peer watch, it froze the list: a device plugged in or pulled out
+    // stayed invisible until the app was restarted. Measured on the z13, 2026-10-05.
+    //
+    // Nothing wanted is therefore the slowest speed rather than a stop. There is no peer to catch
+    // in that state, so the only thing left to notice is a change in what is plugged in.
+    int interval = kIdleListIntervalMs;
     if (m_CanShare && !wantedBusids().isEmpty()) {
         /*
          * Two speeds, because the interval is felt in exactly one of the two states.
@@ -656,16 +826,14 @@ void UsbIpDevices::refresh()
                 break;
             }
         }
-        const int interval = anyShared ? kPeerIntervalMs : kPeerWaitIntervalMs;
-        if (m_PeerTimer.interval() != interval) {
-            m_PeerTimer.setInterval(interval);
-        }
-        if (!m_PeerTimer.isActive()) {
-            m_PeerTimer.start(interval);
-        }
+        interval = anyShared ? kPeerIntervalMs : kPeerWaitIntervalMs;
     }
-    else {
-        m_PeerTimer.stop();
+
+    if (m_PeerTimer.interval() != interval) {
+        m_PeerTimer.setInterval(interval);
+    }
+    if (!m_PeerTimer.isActive()) {
+        m_PeerTimer.start(interval);
     }
 
     rebuild();
@@ -716,31 +884,70 @@ void UsbIpDevices::watchForPeer()
     // again.
     if (!streaming) {
         const bool handBack = m_CanShare && anythingExported();
-        m_OpenedForPeer.clear();
+        m_OpenedForStream.clear();
         m_LastPeer.clear();
         m_PeerAttempts = 0;
         if (handBack) {
             reconcileWithService(QStringList(), false);
         }
+
+        /*
+         * Nothing of ours is out, so this is where the vendor engine starts its way back — on a
+         * timer, and only once.
+         *
+         * ONCE is load-bearing. Every idle poll comes through here, so restarting the timer on
+         * each one would postpone the restore for as long as ArtMoon stayed open and the engine
+         * would never come back at all. It is armed when it is not already counting, and the
+         * restore clears m_VendorStopped, which is what stops it being armed again afterwards.
+         *
+         * Armed even when the hand-back above did not land, because putting the user's software
+         * back is the safe direction to fail in. An engine left paused is a keyboard with no
+         * macros and a mouse with no lighting, and nobody asked for that.
+         */
+        if (!m_VendorStopped.isEmpty() && !m_VendorLingerTimer.isActive()) {
+            m_VendorLingerTimer.start();
+        }
         return;
     }
 
-    if (!m_CanShare || wanted.isEmpty() || m_ReachablePeer.isEmpty()) {
-        m_OpenedForPeer.clear();
+    if (!m_CanShare || wanted.isEmpty()) {
+        m_OpenedForStream.clear();
         m_LastPeer.clear();
         m_PeerAttempts = 0;
         return;
     }
 
-    // A different machine — or the same one arriving again after a gap — starts over.
+    /*
+     * The port is opened for the stream just launched — NOT for a peer we have managed to
+     * observe — and that distinction is the whole of this fix.
+     *
+     * This used to require m_ReachablePeer, which the helper only reports once the far machine
+     * has a stream ESTABLISHED to us. But the far machine cannot get that far until it can ask
+     * what we are offering, and it asks on the port whose firewall rule is opened right here. So
+     * the rule waited for a peer, the peer waited for the rule, and nothing ever moved: the
+     * stream sat on the far side until its 20-second budget ran out and died with error 110.
+     * From here it looked like "waiting for the other machine". From there it looked like a dead
+     * port. Neither end was wrong, and the machine was fine.
+     *
+     * The address is known the moment a stream is launched — the person has just picked it —
+     * which is seconds before the far machine asks. So the trigger is the launch, and the peer is
+     * something we notice afterwards rather than something we wait on.
+     *
+     * `streaming` above is what keeps this honest: this runs only while a stream is actually
+     * starting, so the port still does not sit open on a machine with nothing happening. That was
+     * the security decision and it is unchanged — what changed is which moment counts as
+     * "starting". It is the launch, not the arrival.
+     */
+    const QString opened = wanted.join(QLatin1Char(','));
     if (m_ReachablePeer != m_LastPeer) {
+        // A different machine has named itself. Nothing to reopen — what is open is keyed on what
+        // we are offering, not on who is asking — but the attempts belong to the new one.
         m_LastPeer = m_ReachablePeer;
-        m_OpenedForPeer.clear();
         m_PeerAttempts = 0;
     }
 
-    // Already open for this one. Re-running would re-derive the same rule on every poll.
-    if (m_OpenedForPeer == m_ReachablePeer) {
+    // Already open for exactly this set. Re-running would re-derive the same rule every poll.
+    if (m_OpenedForStream == opened) {
         return;
     }
 
@@ -748,8 +955,25 @@ void UsbIpDevices::watchForPeer()
         return;
     }
 
+    /*
+     * The engine goes out of the way HERE — after every guard above has agreed this take is
+     * really going to be asked for, and immediately before the bind.
+     *
+     * That order is the entire requirement. A device cannot be shared while its vendor engine is
+     * up, and an engine that moves aside after the bind has already lost the race.
+     */
+    m_VendorLingerTimer.stop();
+    if (!ensureVendorEngineClear()) {
+        /*
+         * Nothing is bound, deliberately. ensureVendorEngineClear() has set the reason to show,
+         * and binding anyway is what produces the flap — a device visibly bouncing in and out of
+         * the user's hand while the row claims it was taken.
+         */
+        return;
+    }
+
     if (reconcileWithService(wanted, false)) {
-        m_OpenedForPeer = m_ReachablePeer;
+        m_OpenedForStream = opened;
     }
     else {
         ++m_PeerAttempts;
@@ -798,10 +1022,93 @@ void UsbIpDevices::storeWantedBusids(const QStringList &busids)
     prefs->save();
 }
 
+QStringList UsbIpDevices::rememberedDevices() const
+{
+    return StreamingPreferences::get()->usbIpRememberedDevices;
+}
+
+void UsbIpDevices::storeRememberedDevices(const QStringList &identities)
+{
+    auto *prefs = StreamingPreferences::get();
+    if (prefs->usbIpRememberedDevices == identities) {
+        return;
+    }
+    prefs->usbIpRememberedDevices = identities;
+    prefs->save();
+}
+
+/*
+ * What makes a device the SAME device across an unplug.
+ *
+ * A busid cannot: it is the path the device hangs off, so it names where it was plugged in
+ * rather than what it is. That is exactly why a tick stored as a busid is lost on a replug, and
+ * why storing one as a busid while the device is away is the phantom-device bug this class
+ * already prunes.
+ *
+ * A serial is the device's own answer and follows it to another port. Not every bridge reports
+ * one, so vid:pid is the fallback — enough to tell a drive from a mouse, not enough to tell two
+ * identical enclosures apart, and honest about which of those it is by the prefix below.
+ */
+QString UsbIpDevices::identityForBusid(const QString &busid) const
+{
+    for (const auto &entry : m_Devices) {
+        const QVariantMap row = entry.toMap();
+        if (row.value(QStringLiteral("busid")).toString() != busid) {
+            continue;
+        }
+
+#ifdef Q_OS_LINUX
+        // The kernel's own field for the same device the enumeration just named. Read-only, and
+        // a busid is the sysfs directory's name. Unreadable or empty is normal on devices that
+        // do not report one, and falls through to vid:pid rather than failing.
+        QFile serialFile(QStringLiteral("/sys/bus/usb/devices/%1/serial").arg(busid));
+        if (serialFile.open(QIODevice::ReadOnly)) {
+            const QString serial = QString::fromLocal8Bit(serialFile.readAll()).trimmed();
+            if (!serial.isEmpty()) {
+                return QStringLiteral("serial:") + serial;
+            }
+        }
+#endif
+
+        const QString vidPid = row.value(QStringLiteral("vidPid")).toString();
+        return vidPid.isEmpty() ? QString() : QStringLiteral("vidpid:") + vidPid;
+    }
+
+    return QString();
+}
+
 void UsbIpDevices::setWanted(const QString &busid, bool wanted)
 {
     if (busid.isEmpty()) {
         return;
+    }
+
+    /*
+     * Record the choice against the DEVICE as well as against the slot it is sitting in, so it
+     * survives the device being unplugged and is re-offered switched on when it comes back.
+     *
+     * Un-ticking forgets it for exactly the same reason, and this half is load-bearing: the
+     * replug pass in refresh() re-applies anything remembered, so a device left in that list
+     * after being switched off would switch ITSELF back on at the next poll. The person's last
+     * word wins in both directions.
+     *
+     * identityForBusid() answers from the current enumeration, not from the wanted list, so this
+     * is read before the list below is rewritten. It is empty for a busid that is not in the
+     * list — which cannot happen here, since a toggle only exists on a row that is — and an
+     * empty identity changes nothing.
+     */
+    const QString identity = identityForBusid(busid);
+    if (!identity.isEmpty()) {
+        QStringList remembered = rememberedDevices();
+        if (wanted) {
+            if (!remembered.contains(identity)) {
+                remembered.append(identity);
+                storeRememberedDevices(remembered);
+            }
+        }
+        else if (remembered.removeAll(identity) > 0) {
+            storeRememberedDevices(remembered);
+        }
     }
 
     QStringList busids = wantedBusids();
@@ -1044,6 +1351,16 @@ void UsbIpDevices::settle()
  */
 QString UsbIpDevices::describeToggleFailure() const
 {
+    /*
+     * A refusal whose reason we already know is reported as itself. The generic text below is
+     * what to say when the machine will not explain, and reaching for it while a named program is
+     * holding the device would be the same fault as "Not shared yet": a blank where an answer was
+     * available.
+     */
+    if (!m_VendorReason.isEmpty()) {
+        return m_VendorReason;
+    }
+
     const QString names = wantedBusids().join(QStringLiteral(", "));
 
 #ifdef Q_OS_WIN32
@@ -1058,6 +1375,146 @@ QString UsbIpDevices::describeToggleFailure() const
 
     return tr("%1 did not switch on. If something on this PC is using it, close that first, "
               "then try again.").arg(names);
+}
+
+/*
+ * Move the vendor engine out of the way, or explain why it will not move.
+ *
+ * The measurements behind this live in vendorengine.h; what matters here is the ordering and the
+ * failure behaviour.
+ *
+ * ORDERING — this runs immediately before the bind and nowhere else. Not at the tick: a tick is
+ * intent, nothing is attached at tick time, and stopping there would take the user's keyboard
+ * software away for as long as the tick stood, which could be days. The engine only has to be
+ * gone for the seconds a device is actually attached.
+ *
+ * FAILING CLOSED — if the engine will not go, nothing is bound and the reason is put where the
+ * row can show it. A bind attempted on a live engine is not a partial success; it is the flap,
+ * and it reads in the list exactly like a take that worked.
+ */
+bool UsbIpDevices::ensureVendorEngineClear()
+{
+    const QString running = VendorEngine::runningEngine();
+
+    if (running.isEmpty()) {
+        /*
+         * An engine that was already closed when we looked is never started again, because we did
+         * not stop it: m_VendorStopped stays empty, so no restore is owed. Without that rule a
+         * release would launch software the user had deliberately left closed.
+         */
+        if (!m_VendorReason.isEmpty()) {
+            m_VendorReason.clear();
+            emit devicesChanged();
+        }
+        return true;
+    }
+
+    if (m_VendorStopped != running) {
+        /*
+         * Written down BEFORE the stop, which is the whole reason the record exists: if this
+         * process dies between the two, nothing else on the machine will ever start this engine
+         * again and the user is left without their keyboard software until they work out why.
+         */
+        recordVendorPause(running);
+    }
+
+    if (!VendorEngine::stopRunningEngine()) {
+        m_VendorReason = tr("%1 is running and would not close, so this device cannot be shared. "
+                            "Close it yourself, then tick it again.")
+                             .arg(VendorEngine::displayName(running));
+        // Nothing was stopped, so nothing is owed — the record must not outlive the attempt.
+        clearVendorPause();
+        emit devicesChanged();
+        return false;
+    }
+
+    if (m_VendorStopped != running) {
+        m_VendorStopped = running;
+        emit devicesChanged();
+    }
+    return true;
+}
+
+/* Start the paused engine again. Idempotent, and safe to call when nothing is paused. */
+void UsbIpDevices::restoreVendorEngine()
+{
+    if (m_VendorStopped.isEmpty()) {
+        return;
+    }
+
+    m_VendorLingerTimer.stop();
+
+    const bool launched = VendorEngine::restoreEngine();
+    if (!launched && VendorEngine::runningEngine().isEmpty()) {
+        /*
+         * The launch did not take. The record is deliberately left in place, so the next idle
+         * poll re-arms the linger and tries again, rather than forgetting an engine that is still
+         * down. Trying again is the safe direction: the failure this can cause is a repeated
+         * launch attempt, and the failure the other way is a user with no macros and no lighting
+         * and no idea why.
+         */
+        m_VendorReason = tr("%1 could not be started again. Open it from the Start menu when you "
+                            "are finished sharing.")
+                             .arg(VendorEngine::displayName(m_VendorStopped));
+        emit devicesChanged();
+        return;
+    }
+
+    m_VendorStopped.clear();
+    m_VendorReason.clear();
+    clearVendorPause();
+    emit devicesChanged();
+}
+
+/*
+ * Where the pause is written down.
+ *
+ * One small file rather than a settings key: it describes a transient fact — "this engine was
+ * stopped and has not been put back" — and it must stop existing the moment that stops being
+ * true. A setting invites somebody to leave it set.
+ */
+QString UsbIpDevices::vendorPausePath()
+{
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    return dir + QStringLiteral("/vendor-engine-paused.ini");
+}
+
+void UsbIpDevices::recordVendorPause(const QString &engineName)
+{
+    QSettings record(vendorPausePath(), QSettings::IniFormat);
+    record.setValue(QStringLiteral("engine"), engineName);
+    record.sync();
+}
+
+void UsbIpDevices::clearVendorPause()
+{
+    QFile::remove(vendorPausePath());
+}
+
+/*
+ * The crash case, and the reason the record is written before the stop rather than after it.
+ *
+ * If a previous run stopped an engine and died before putting it back, this is the only thing
+ * left that knows. Nothing on the machine will start that engine again — measured on the mini PC
+ * rather than assumed: no service, no watchdog, no scheduled task — so a forgotten pause means a
+ * keyboard with no macros until the user works out what happened.
+ *
+ * Restores only when the engine is genuinely down. A record with the engine running means either
+ * the stop never landed or the user has since started it themselves; there is nothing to do
+ * either way, and launching a second copy of it would be worse than the problem.
+ */
+void UsbIpDevices::honourRecordedVendorPause()
+{
+    QSettings record(vendorPausePath(), QSettings::IniFormat);
+    const QString engineName = record.value(QStringLiteral("engine")).toString();
+    if (engineName.isEmpty()) {
+        return;
+    }
+
+    if (VendorEngine::runningEngine().isEmpty()) {
+        VendorEngine::restoreEngine();
+    }
+    clearVendorPause();
 }
 
 /* True while any device's label disagrees with the machine. */

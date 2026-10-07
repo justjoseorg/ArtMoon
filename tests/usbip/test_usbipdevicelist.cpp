@@ -3,7 +3,8 @@
  *
  * Every fixture below is a VERBATIM capture from a real machine — no invented output.
  * The Windows fixtures come from niks-minipc (`usbipd list`), the Linux fixture from a
- * kernel 7.0 box with usbip tools installed (`usbip list -l`).
+ * kernel 7.0 box with usbip tools installed (`usbip list -l`). The single exception states
+ * so in its own comment: it is constructed to pin a RULE, not to record a machine.
  *
  * Build and run:  ./run.sh
  */
@@ -68,6 +69,27 @@ static const char *kUsbipListLocal =
     " - busid 1-8 (0bda:b85b)\n"
     "   Realtek Semiconductor Corp. : unknown product (0bda:b85b)\n"
     "\n";
+
+// ---- real capture, niks-minipc, 2026-10-06, with 1-6 bound using --force ----------
+//
+// Taken live from the machine while the drive was stuck. The row that matters is 1-6:
+// usbipd prints `Shared (forced)`, and the parser used to match the state with
+// endsWith("Shared"), so this row read as NOT SHARED — which is what stopped ArtMoon
+// ever handing the drive back. See testForcedState().
+static const char *kUsbipdListForced =
+    "Connected:\n"
+    "BUSID  VID:PID    DEVICE                                                        STATE\n"
+    "1-5    8087:0029  Intel(R) Wireless Bluetooth(R)                                Not shared\n"
+    "1-6    0bda:9210  USB Attached SCSI (UAS) Mass Storage Device                   Shared (forced)\n"
+    "5-1    1532:007b  Razer Viper Ultimate                                          Not shared\n"
+    "5-2    1532:028d  USB Input Device, Razer BlackWidow V4 Pro                     Not shared\n"
+    "5-3    145f:02b4  Trust USB microphone, USB Input Device                        Not shared\n"
+    "6-4    1a34:f517  USB Input Device                                              Not shared\n"
+    "7-2    1532:0e05  Razer Kiyo Pro                                                Not shared\n"
+    "8-3    1532:007e  USB Input Device, Razer Mouse Dock                            Not shared\n"
+    "\n"
+    "Persisted:\n"
+    "GUID                                  DEVICE\n";
 
 static void testWindows()
 {
@@ -147,10 +169,61 @@ static void testLinux()
             QStringLiteral("0"), QStringLiteral("usbipd: empty input"));
 }
 
+/*
+ * The state column is not always one word.
+ *
+ * `bind --force` makes usbipd report `Shared (forced)`. Every device we ever bound with
+ * --force read as NOT shared here — so the row lied about a device that had genuinely been
+ * taken from the user, and, far worse, ArtMoon concluded that nothing of its was out and
+ * never ran the hand-back. The drive stayed gone from Windows through a reboot.
+ */
+static void testForcedState()
+{
+    const QVector<LocalUsbDevice> forced =
+        UsbIpDeviceList::parseUsbipdList(QString::fromUtf8(kUsbipdListForced));
+
+    checkEq(QString::number(forced.size()), QStringLiteral("8"),
+            QStringLiteral("usbipd: device count with a forced take"));
+    if (forced.size() != 8) {
+        return;
+    }
+
+    const LocalUsbDevice &drive = forced.at(1);
+    checkEq(drive.busid, QStringLiteral("1-6"), QStringLiteral("forced: busid"));
+    checkEq(drive.vidPid, QStringLiteral("0bda:9210"), QStringLiteral("forced: vid:pid"));
+    check(drive.exported, QStringLiteral("forced: 'Shared (forced)' IS shared"));
+
+    // The qualifier belongs to the state, not to the name of the device.
+    checkEq(drive.description, QStringLiteral("USB Attached SCSI (UAS) Mass Storage Device"),
+            QStringLiteral("forced: description loses the (forced) qualifier"));
+
+    // The unambiguous states must read exactly as they always did.
+    check(!forced.at(0).exported, QStringLiteral("forced: 'Not shared' is still not shared"));
+    checkEq(forced.at(0).description, QStringLiteral("Intel(R) Wireless Bluetooth(R)"),
+            QStringLiteral("forced: a trailing 'Not shared' is still peeled off the name"));
+
+    /*
+     * Constructed, not captured: this pins the RULE rather than one particular row. If
+     * usbipd ever grows another qualifier, the row must still read as shared rather than
+     * quietly reverting to "not shared" — which is the whole failure being guarded here.
+     */
+    const QVector<LocalUsbDevice> otherQualifier = UsbIpDeviceList::parseUsbipdList(
+        QStringLiteral("Connected:\n"
+                       "BUSID  VID:PID    DEVICE                        STATE\n"
+                       "9-1    1532:007b  Razer Viper Ultimate          Shared (something new)\n"));
+    checkEq(QString::number(otherQualifier.size()), QStringLiteral("1"),
+            QStringLiteral("forced: an unrecognised qualifier still yields a row"));
+    if (!otherQualifier.isEmpty()) {
+        check(otherQualifier.at(0).exported,
+              QStringLiteral("forced: any parenthesised qualifier still means shared"));
+    }
+}
+
 int main()
 {
     testWindows();
     testLinux();
+    testForcedState();
 
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

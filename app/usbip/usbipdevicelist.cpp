@@ -55,17 +55,39 @@ QVector<LocalUsbDevice> parseUsbipdList(const QString &output)
         // the remaining tokens and then peel the state off the end.
         QString rest = parts.mid(2).join(QLatin1Char(' ')).trimmed();
 
-        // Check "Not shared" first — it does not end with the capitalised "Shared", but
-        // testing in the other order is a trap waiting for a case change upstream.
-        const QString notShared = QStringLiteral("Not shared");
-        const QString shared = QStringLiteral("Shared");
+        /*
+         * ── The state is the tail of the row, and it is not always one word ────────
+         *
+         * `bind --force` makes usbipd report `Shared (forced)`, not `Shared`. This parser
+         * matched the state with endsWith("Shared"), so a forced take ended in `(forced)`,
+         * matched NOTHING, and fell straight through to `exported = false`.
+         *
+         * That single wrong word took a device away from Windows and kept it. `exported`
+         * is what feeds the row's `shared` flag, and the whole give-it-back path is keyed
+         * on that flag — see anythingExported() in usbipdevices.cpp. With `shared` reading
+         * false, ArtMoon believed nothing of its was out, so it never ran the hand-back.
+         * Measured on niks-minipc, 2026-10-06: an NVMe bound with --force disappeared from
+         * Windows, was still gone after a reboot, and was not released on any later run.
+         *
+         * So the qualifier is expected, not exceptional: `Shared` carries an optional
+         * parenthesised suffix and ANY suffix still means shared. "Not shared" is tested
+         * first, exactly as before, because it does not end in the capitalised `Shared` and
+         * testing the other way round is a trap waiting for a case change upstream.
+         */
+        static const QRegularExpression notSharedState(
+            QStringLiteral("\\s*Not shared\\s*$"));
+        static const QRegularExpression sharedState(
+            QStringLiteral("\\s*Shared(\\s*\\([^)]*\\))?\\s*$"));
 
-        if (rest.endsWith(notShared)) {
+        const QRegularExpressionMatch notSharedMatch = notSharedState.match(rest);
+        const QRegularExpressionMatch sharedMatch = sharedState.match(rest);
+
+        if (notSharedMatch.hasMatch()) {
             dev.exported = false;
-            rest.chop(notShared.size());
-        } else if (rest.endsWith(shared)) {
+            rest.chop(notSharedMatch.capturedLength());
+        } else if (sharedMatch.hasMatch()) {
             dev.exported = true;
-            rest.chop(shared.size());
+            rest.chop(sharedMatch.capturedLength());
         } else {
             dev.exported = false;
         }
