@@ -33,10 +33,6 @@ Sharing a device now works the first time, and keeps working.
 - **Input:** device sharing works over a **local network or a VPN, and nowhere else in this release**. The app opens the port only for the machine it is serving, and only while a stream is running.
 - **Input:** device sharing is **not behind any authentication at this time** — no password, no pairing step, no account. A device you switch on is offered to whatever can reach the port. Keep both machines on the same network or on a tunnel, and do not expose this port to the internet.
 
-**Under the hood**
-- The device list's parsers are pinned against captures taken from real machines, so a change in either format cannot pass unnoticed, and the vendor-engine handling carries its own tests. CI now runs them rather than assuming they still pass.
-- Nothing about a device is cached or written down. Every answer — what is plugged in, what is offered, what the far machine holds — is read from the machine at the moment it is asked for.
-
 --------------------------------------
 **Version 1.8.0 (05/10/2026)**
 --------------------------------------
