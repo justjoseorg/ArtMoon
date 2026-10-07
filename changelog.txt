@@ -26,6 +26,13 @@ Sharing a device now works the first time, and keeps working.
 - A device you switch on is remembered by the device itself rather than by the socket it happened to be plugged into, so a drive that is unplugged and put back comes back offered instead of needing to be switched on again.
 - The device list no longer stops looking once everything is switched off, and a switch left on a device that is not plugged in is kept rather than dropped.
 
+**Good to know — 3**
+
+**Input**
+- **Input:** device sharing needs an **[ArtLight](https://github.com/onaiaku/ArtLight) host (V1.5.0 or above)** at the far end. ArtLight is the half that receives the device; other hosts are not supported yet.
+- **Input:** device sharing works over a **local network or a VPN, and nowhere else in this release**. The app opens the port only for the machine it is serving, and only while a stream is running.
+- **Input:** device sharing is **not behind any authentication at this time** — no password, no pairing step, no account. A device you switch on is offered to whatever can reach the port. Keep both machines on the same network or on a tunnel, and do not expose this port to the internet.
+
 **Under the hood**
 - The device list's parsers are pinned against captures taken from real machines, so a change in either format cannot pass unnoticed, and the vendor-engine handling carries its own tests. CI now runs them rather than assuming they still pass.
 - Nothing about a device is cached or written down. Every answer — what is plugged in, what is offered, what the far machine holds — is read from the machine at the moment it is asked for.
