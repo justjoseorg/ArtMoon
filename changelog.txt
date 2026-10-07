@@ -5,6 +5,32 @@ ArtMoon - ChangeLog - Developed by onaiaku & Rias
 https://github.com/onaiaku/ArtMoon
 
 --------------------------------------
+**Version 1.8.1 (07/10/2026)**
+--------------------------------------
+
+Sharing a device now works the first time, and keeps working.
+
+**Fixed — 10**
+
+**Input**
+- **Windows:** a device Windows reports as in use can now be shared. Ticking a drive or a keyboard whose own software had claimed it did nothing at all — the bind was refused quietly, and the switch then looked as though it had worked. It is now bound with the force the sharing tool provides, so the device goes where you asked it to go.
+- **Windows:** a device you had switched on is now recognised as switched on. The sharing tool reports a forced bind as `Shared (forced)`, and that read as *not shared* — so a device you had lent out still looked available on this machine, and the far machine's copy was never released when the stream ended. Both of those follow from reading it correctly.
+- **Windows:** sharing a device no longer fights Razer's software. With Synapse running, a shared Razer keyboard or mouse flapped — taken and handed back every couple of seconds — while every log said the take had worked. The engine's own programs are now moved aside for the seconds the device is attached, and started again when it comes back. Razer's services are never touched.
+- **Windows:** the sharing helper now installs and starts reliably. Removing and reinstalling in one step could leave a service marked for deletion and the helper missing altogether; it now retries, waits for the sharing engine before starting, and asks Windows to bring it back if it ever stops.
+- **Windows:** the helper's service path is no longer left unquoted. That path contains spaces, and an unquoted path in a service definition is the well-known way for another local account to get its own program run with that service's rights. It is now written quoted.
+- **Linux:** the sharing port opens as the stream starts rather than waiting for the far machine to reach it first, so a device can be taken as soon as the stream is up.
+- **Linux:** the sharing service is running after a restart. It used to wait for the app to be opened, so a machine that had just been rebooted could not offer anything until somebody had launched ArtMoon on it.
+- **Linux:** ArtMoon no longer fights a sharing daemon the distribution already provides. Where one was installed, both started at the same moment, one took the port and the other restarted endlessly; ArtMoon now steps aside when the system's own is present.
+
+**Settings**
+- A device you switch on is remembered by the device itself rather than by the socket it happened to be plugged into, so a drive that is unplugged and put back comes back offered instead of needing to be switched on again.
+- The device list no longer stops looking once everything is switched off, and a switch left on a device that is not plugged in is kept rather than dropped.
+
+**Under the hood**
+- The device list's parsers are pinned against captures taken from real machines, so a change in either format cannot pass unnoticed, and the vendor-engine handling carries its own tests. CI now runs them rather than assuming they still pass.
+- Nothing about a device is cached or written down. Every answer — what is plugged in, what is offered, what the far machine holds — is read from the machine at the moment it is asked for.
+
+--------------------------------------
 **Version 1.8.0 (05/10/2026)**
 --------------------------------------
 
