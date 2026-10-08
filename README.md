@@ -137,6 +137,12 @@ curl -fsSL https://raw.githubusercontent.com/onaiaku/ArtMoon/main/install.sh | b
 
 The script installs the AppImage to `/usr/local/bin`, adds a desktop entry, and doubles as the updater — run it again to update.
 
+**SteamOS Game Mode (touchscreen handhelds)** — when ArtMoon runs as a non-Steam shortcut, Steam turns the touchscreen into mouse emulation by default, so taps on the stream land in the wrong place. To fix it:
+
+1. ArtMoon → **Controller Settings → Edit Layout → Action Sets**, select the **Default** set (adding it to another set or layer won't take effect), then **Add Always-On Command → System → Touchscreen Native Support**.
+2. In ArtMoon's settings, turn on **Optimize mouse for remote desktop** so a tap clicks where your finger is instead of acting like a trackpad.
+3. Restart ArtMoon from Steam.
+
 **Android** — (Phone/Tablet/TV) — download `ArtMoon-<version>-android.apk` from the [**Releases page**](https://github.com/onaiaku/ArtMoon/releases/latest) and sideload it (Android will ask you to allow installs from that source — one toggle, then it installs like any app).
 
 ## 🏗️ Architecture
