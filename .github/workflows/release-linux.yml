@@ -18,10 +18,11 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Download built AppImage
+      - name: Download built AppImages
         uses: actions/download-artifact@v6
         with:
-          name: ArtMoon-LinuxAppImage-${{ github.ref_name }}
+          pattern: ArtMoon-LinuxAppImage-*-${{ github.ref_name }}
+          merge-multiple: true
           path: appimage
 
       - name: Attach AppImage to the release
