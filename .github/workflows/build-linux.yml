@@ -34,8 +34,25 @@ jobs:
     # release of Ubuntu"). Nothing else about the build changes: Qt still comes from
     # aqtinstall, so jammy's 6.2.4 distro Qt is irrelevant (that was the original
     # reason for leaving jammy, and it stopped applying once aqtinstall landed).
-    runs-on: ubuntu-24.04
-    container: ubuntu:22.04
+    # aarch64 builds natively on GitHub's arm64 runner, but in noble (glibc 2.39):
+    # aqt's linux_arm64 Qt is itself built against glibc 2.38 (its syncqt won't
+    # even start in jammy), so that's the floor for the arm64 AppImage anyway.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+            aqt_host: linux
+            aqt_arch: gcc_64
+            image: ubuntu:22.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            aqt_host: linux_arm64
+            aqt_arch: gcc_arm64
+            image: ubuntu:24.04
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
     defaults:
       run:
         # A container job's default shell is /bin/sh (dash), NOT the bash a runner job
@@ -175,11 +192,12 @@ jobs:
           # package was simply installed from apt.
           # Plain pip: --break-system-packages is a noble-ism (PEP 668) and jammy's pip 22
           # rejects the flag outright.
-          sudo pip3 install aqtinstall
-          # Arch name varies by Qt version (gcc_64 pre-6.7, linux_gcc_64 after)
-          QT_ARCH=$(aqt list-qt linux desktop --arch "$QT_VERSION" | grep -oE '[a-z_]*gcc_64' | tail -1)
+          sudo PIP_BREAK_SYSTEM_PACKAGES=1 pip3 install aqtinstall
+          # Arch name varies by Qt version (gcc_64 pre-6.7, linux_gcc_64 after);
+          # arm64 desktop Qt lives under the linux_arm64 host as linux_gcc_arm64.
+          QT_ARCH=$(aqt list-qt ${{ matrix.aqt_host }} desktop --arch "$QT_VERSION" | grep -oE '[a-z_]*${{ matrix.aqt_arch }}' | tail -1)
           echo "Using Qt arch: $QT_ARCH"
-          aqt install-qt linux desktop $QT_VERSION "$QT_ARCH" --outputdir /opt/qt
+          aqt install-qt ${{ matrix.aqt_host }} desktop $QT_VERSION "$QT_ARCH" --outputdir /opt/qt
           # aqt's desktop archive does NOT ship the Qt Wayland platform plugin
           # (libqwayland). Build it from the qtwayland source matching $QT_VERSION
           # so Wayland sessions run native instead of falling back to XWayland.
@@ -207,7 +225,7 @@ jobs:
           echo "Qt installed at: $QT_DIR"
           sudo ln -sf "$QT_DIR/bin/qmake" "$QT_DIR/bin/qmake6"
           echo "$QT_DIR/bin" >> "${GITHUB_PATH}"
-          sudo pip3 install meson
+          sudo PIP_BREAK_SYSTEM_PACKAGES=1 pip3 install meson
           mkdir -p dep_root/{bin,include,lib}
           echo "DEP_ROOT=$PWD/dep_root" >> "${GITHUB_ENV}"
           echo "$PWD/dep_root/bin" >> "${GITHUB_PATH}"
@@ -450,8 +468,8 @@ jobs:
       - name: Install linuxdeploy
         working-directory: dep_root/bin
         run: |
-          wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          wget https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.arch }}.AppImage
+          wget https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-${{ matrix.arch }}.AppImage
           chmod +x linuxdeploy*.AppImage
 
       - name: Build Binaries
@@ -462,7 +480,7 @@ jobs:
       - name: Upload Binaries
         uses: actions/upload-artifact@v6
         with:
-          name: ArtMoon-LinuxAppImage${{ inputs.release_tag != '' && format('-{0}', inputs.release_tag) || '' }}
-          path: build/installer-release/ArtMoon-*-x86_64.AppImage
+          name: ArtMoon-LinuxAppImage-${{ matrix.arch }}${{ inputs.release_tag != '' && format('-{0}', inputs.release_tag) || '' }}
+          path: build/installer-release/ArtMoon-*-${{ matrix.arch }}.AppImage
           compression-level: 0
           if-no-files-found: error

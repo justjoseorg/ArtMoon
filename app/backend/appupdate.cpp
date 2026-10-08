@@ -58,10 +58,16 @@ const QRegularExpression& assetPattern()
 }
 #else
 // The CI AppImage — the glob actions/upload-artifact is given in build-linux.yml.
+// One AppImage per architecture, so only this build's own may qualify.
+#if defined(Q_PROCESSOR_ARM_64)
+#define ARTMOON_APPIMAGE_ARCH "aarch64"
+#else
+#define ARTMOON_APPIMAGE_ARCH "x86_64"
+#endif
 const QRegularExpression& assetPattern()
 {
     static const QRegularExpression re(
-        QStringLiteral("^ArtMoon-(\\d+(?:\\.\\d+){1,3})-x86_64\\.AppImage$"),
+        QStringLiteral("^ArtMoon-(\\d+(?:\\.\\d+){1,3})-" ARTMOON_APPIMAGE_ARCH "\\.AppImage$"),
         QRegularExpression::CaseInsensitiveOption);
     return re;
 }

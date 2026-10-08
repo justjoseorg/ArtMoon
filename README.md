@@ -32,7 +32,7 @@ A gamepad-first streaming client built to work best with [ArtLight](https://gith
 
 ## ✅ Compatibility
 
-**Windows 10 and 11**, **Linux** (AppImage), and **Android** (APK, Android 5.0+). Works as an ordinary Moonlight-compatible client against any **[ArtLight](https://github.com/onaiaku/ArtLight)**, Sunshine, Apollo, or Vibepollo host, and unlocks its paired feature set when the host companion is running.
+**Windows 10 and 11**, **Linux** (AppImage, x86_64 and arm64), and **Android** (APK, Android 5.0+). Works as an ordinary Moonlight-compatible client against any **[ArtLight](https://github.com/onaiaku/ArtLight)**, Sunshine, Apollo, or Vibepollo host, and unlocks its paired feature set when the host companion is running.
 
 ## 🌙 Pair it with ArtLight
 
