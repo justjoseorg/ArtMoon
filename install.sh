@@ -55,7 +55,10 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 ARCH="$(uname -m)"
-[ "$ARCH" = "x86_64" ] || warn "Unsupported architecture '$ARCH' — prebuilt binaries are x86_64 only."
+case "$ARCH" in
+    x86_64|aarch64) ;;
+    *) warn "Unsupported architecture '$ARCH' — prebuilt binaries are x86_64 and aarch64 only." ;;
+esac
 
 # ---------------------------------------------------------------------------
 # mode: --build
@@ -126,7 +129,7 @@ install_prebuilt() {
     info "Looking up the latest release..."
     local asset_url version
     asset_url="$(fetch_json_field "${API}/releases/latest" \
-        "next(a['browser_download_url'] for a in d['assets'] if 'AppImage' in a['name'])")" \
+        "next(a['browser_download_url'] for a in d['assets'] if a['name'].endswith('-${ARCH}.AppImage'))")" \
         || die "No AppImage asset found in the latest release.
 Is there a release published yet? Check https://github.com/${REPO}/releases
 (You can also build from source: install.sh --build)"
