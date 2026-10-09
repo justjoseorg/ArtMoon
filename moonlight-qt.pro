@@ -19,7 +19,7 @@ win32:!winrt:contains(QT_ARCH, x86_64):!disable-pyrowave {
     SUBDIRS += pyrowave
     app.depends += pyrowave
 }
-linux:contains(QT_ARCH, x86_64):!disable-pyrowave {
+linux:!disable-pyrowave {
     SUBDIRS += pyrowave
     app.depends += pyrowave
 }

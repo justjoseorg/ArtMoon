@@ -553,7 +553,7 @@ win32:!winrt:contains(QT_ARCH, x86_64):!disable-pyrowave {
     message(PyroWave decoder enabled)
     CONFIG += pyrowave
 }
-linux:contains(QT_ARCH, x86_64):!disable-pyrowave {
+linux:!disable-pyrowave {
     # On Linux the codec hands its decoded planes over through the libplacebo Vulkan
     # renderer, so it is only usable where that renderer was actually found. Without this
     # the PyroWave sources would be compiled against headers that are not there.
