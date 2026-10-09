@@ -5,15 +5,15 @@
 	<key>GCSupportsGameMode</key>
 	<true/>
 	<key>CFBundleExecutable</key>
-	<string>ArtMoon</string>
+	<string>Moonlight</string>
 	<key>LSSupportsGameMode</key>
 	<true/>
 	<key>CFBundleGetInfoString</key>
 	<string>Stream games and other applications from another PC</string>
 	<key>CFBundleIconFile</key>
-	<string>artmoon</string>
+	<string>moonlight</string>
 	<key>CFBundleIdentifier</key>
-	<string>io.github.onaiaku.artmoon</string>
+	<string>com.moonlight-stream.Moonlight</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>CFBundlePackageType</key>
@@ -41,13 +41,13 @@
 		<true/>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>ArtMoon uses the local network to connect to your gaming PC for streaming.</string>
+	<string>Moonlight uses the local network to connect to your gaming PC for streaming.</string>
 	<key>CFBundleVersion</key>
 	<string>VERSION</string>
 	<key>CFBundleShortVersionString</key>
 	<string>VERSION</string>
 	<key>CFBundleDisplayName</key>
-	<string>ArtMoon</string>
+	<string>Moonlight</string>
     <key>LSApplicationCategoryType</key>
 	<string>public.app-category.games</string>
 </dict>
