@@ -8,7 +8,7 @@
 
 A gamepad-first streaming client built to work best with [ArtLight](https://github.com/onaiaku/ArtLight)
 
-<a href="https://github.com/onaiaku/ArtMoon"><img alt="Platform" src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20%7C%20Linux%20%7C%20Android-blue.svg"></a>
+<a href="https://github.com/onaiaku/ArtMoon"><img alt="Platform" src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20%7C%20Linux%20x86__64%20%7C%20arm64%20%7C%20Android-blue.svg"></a>
 <a href="https://github.com/onaiaku/ArtMoon"><img alt="Framework" src="https://img.shields.io/badge/Framework-Qt%206-brightgreen.svg"></a>
 <a href="https://www.gnu.org/licenses/gpl-3.0"><img alt="License: GPL v3" src="https://img.shields.io/badge/License-GPLv3-green.svg"></a>
 
@@ -32,7 +32,7 @@ A gamepad-first streaming client built to work best with [ArtLight](https://gith
 
 ## ✅ Compatibility
 
-**Windows 10 and 11**, **Linux** (AppImage, x86_64 and arm64), and **Android** (APK, Android 5.0+). Works as an ordinary Moonlight-compatible client against any **[ArtLight](https://github.com/onaiaku/ArtLight)**, Sunshine, Apollo, or Vibepollo host, and unlocks its paired feature set when the host companion is running.
+**Windows 10 and 11**, **Linux** (AppImage — x86_64 and arm64), and **Android** (APK, Android 5.0+). Works as an ordinary Moonlight-compatible client against any **[ArtLight](https://github.com/onaiaku/ArtLight)**, Sunshine, Apollo, or Vibepollo host, and unlocks its paired feature set when the host companion is running.
 
 ## 🌙 Pair it with ArtLight
 
@@ -136,6 +136,8 @@ curl -fsSL https://raw.githubusercontent.com/onaiaku/ArtMoon/main/install.sh | b
 ```
 
 The script installs the AppImage to `/usr/local/bin`, adds a desktop entry, and doubles as the updater — run it again to update.
+
+It picks the right build for the machine it runs on — **x86_64** or **aarch64** — so the same line works on a desktop, a handheld, or anything ARM running Linux.
 
 **SteamOS Game Mode (touchscreen handhelds)** — when ArtMoon runs as a non-Steam shortcut, Steam turns the touchscreen into mouse emulation by default, so taps on the stream land in the wrong place. To fix it:
 
