@@ -13,24 +13,16 @@ ArtMoon now runs on ARM handhelds, and behaves properly under Steam's Game Mode.
 **New — 2**
 
 **Platforms**
-- **ARM64:** there is now an AppImage for ARM Linux beside the x86_64 one.
-  Both are attached to every release, and both the install script and the
-  in-app updater choose whichever matches the machine they are running on —
-  so an ARM handheld can never be handed the x86_64 file, or the other way
-  round.
-- **SteamOS Game Mode:** launched from Steam on a handheld, ArtMoon now opens
-  fullscreen instead of sitting at its default size, and the controller
-  reaches the host. Steam's Game Mode compositor never gives the stream
-  window keyboard focus, so every pad event was being dropped before this.
+- **ARM64:** there is now an AppImage for ARM Linux beside the x86_64 one. Both are attached to every release, and both the install script and the in-app updater choose whichever matches the machine they are running on — so an ARM handheld can never be handed the x86_64 file, or the other way round.
+- **SteamOS Game Mode:** launched from Steam on a handheld, ArtMoon now opens fullscreen instead of sitting at its default size, and the controller reaches the host. Steam's Game Mode compositor never gives the stream window keyboard focus, so every pad event was being dropped before this.
 
 **Good to know — 1**
 
 **Platforms**
-- The ARM64 build needs glibc 2.38 or newer, so it is aimed at SteamOS and
-  other current ARM distributions rather than older ones. PyroWave is not
-  built for ARM.
+- The ARM64 build needs glibc 2.38 or newer, so it is aimed at SteamOS and other current ARM distributions rather than older ones. PyroWave is not built for ARM.
 
 --------------------------------------
+
 **Version 1.8.1 (07/10/2026)**
 --------------------------------------
 
