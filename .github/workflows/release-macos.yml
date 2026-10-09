@@ -1,0 +1,34 @@
+---
+name: Release - macOS DMG
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-macos.yml
+    with:
+      release_tag: ${{ github.ref_name }}
+
+  attach:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download built DMG
+        uses: actions/download-artifact@v6
+        with:
+          name: ArtMoon-macOS-${{ github.ref_name }}
+          path: dmg
+
+      - name: Attach DMG to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Stay a draft: the release is published in one step, once every asset
+          # is attached, so its page never shows notes with nothing to download.
+          # Left off, this action finalises (publishes) a draft by itself.
+          draft: true
+          files: dmg/*.dmg
